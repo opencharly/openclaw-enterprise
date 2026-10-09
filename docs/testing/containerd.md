@@ -34,6 +34,17 @@ to it: a stale binary exercises the old code, and the failure it produces — a
 container placed on one network instead of two, for instance — looks like a bug in
 the change you just made.
 
+The file is declared as the full-only `containerd-engine` lane, which selects it with
+`OCC_TEST_NERDCTL_REAL=1` and requires `OCC_TEST_NERDCTL_HELPER` and `OCC_TEST_NERDCTL_IMAGE` by
+name rather than falling back to a path or tag a fresh machine does not have. That lane is
+declared and unexecuted: no workflow selects it yet, because no runner setup provides a rootless
+containerd and `nerdctl`, no step builds the helper, and no prepare imports the selected image.
+Until that exists, run it on a prepared host:
+
+```bash
+node scripts/ci/run-tests.mjs run containerd-engine
+```
+
 A case that asserts placement must read the engine, and the engine reports the
 networks a container stands on only while that container runs. It also adopts an
 owned container left by a crashed run, so such a case cleans its Namespace first.
