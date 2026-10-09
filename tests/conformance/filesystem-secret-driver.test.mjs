@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,10 +21,18 @@ const IDENTITY = { id: "sec_1", namespaceId: "ns_1", name: "model-token" };
 test("filesystem-secret-driver stores, verifies, updates, resolves and deletes one exact Secret", async (t) => {
   const { directory, driver } = await withStorage(t);
   const reference = await driver.create(IDENTITY, "s3cret-one");
-  assert.equal(reference.namespaceName, "ns_1");
-  assert.equal(reference.name, "model-token");
+  // The persisted reference must satisfy the occ.secrets backend columns, which are
+  // Kubernetes Secret coordinates: a DNS-1123 label namespace, a lowercase DNS subdomain
+  // name and a UUID uid. This Driver publishes opaque hashes instead of the OCC identities,
+  // so the locator carries no namespace or Secret name.
+  assert.match(reference.namespaceName, /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/);
+  assert.ok(reference.namespaceName.length <= 63);
+  assert.match(reference.name, /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/);
+  assert.ok(reference.name.length <= 253);
   assert.equal(reference.key, "value");
-  assert.match(reference.uid, /^[0-9a-f]{32}$/);
+  assert.match(reference.uid, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.ok(!`${reference.namespaceName}${reference.name}`.includes("ns_1"));
+  assert.ok(!`${reference.namespaceName}${reference.name}`.includes("model-token"));
 
   // The value belongs to one stored file whose permissions keep it off other accounts.
   const stored = join(directory, (await findStoredFile(directory)).name);
@@ -59,7 +68,8 @@ test("filesystem-secret-driver refuses a foreign or malformed backend", async (t
   const reference = await driver.create(IDENTITY, "s3cret-one");
   const secret = { ...IDENTITY, driverId: driver.id, backendRef: reference, createdAt: "now" };
 
-  const foreign = { ...secret, backendRef: { ...reference, uid: "0".repeat(32) } };
+  // A well-formed but foreign uid: the refusal is about identity, not about the shape.
+  const foreign = { ...secret, backendRef: { ...reference, uid: randomUUID() } };
   await assert.rejects(driver.resolve(foreign), /does not own/);
   await assert.rejects(driver.update(foreign, "s3cret-two"), /does not own/);
   await assert.rejects(driver.delete(foreign), /does not own/);

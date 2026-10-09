@@ -77,15 +77,13 @@ export interface StagedOAuthLogin {
   readonly expiresAt?: string;
 }
 
-/** The native Codex `auth.json` the shared runtime logs in from. */
-export interface NativeCodexAuth {
-  readonly auth_mode: string;
-  readonly tokens: {
-    readonly id_token: string;
-    readonly access_token: string;
-    readonly refresh_token: string;
-  };
-}
+/**
+ * The native Codex `auth.json` the shared runtime logs in from. It is handed on verbatim after
+ * validation, as the Kubernetes Compute Driver seeds `credential.auth` unchanged: the file also
+ * carries Codex's own `account_id`, `last_refresh` and a null `OPENAI_API_KEY`, and rebuilding a
+ * subset would drop bookkeeping Codex expects to find.
+ */
+export type NativeCodexAuth = Readonly<Record<string, unknown>>;
 
 /** The identity a Compute Driver reads a staged login by, as the platform resolved it. */
 export interface OAuthLoginReference {
@@ -159,8 +157,12 @@ export async function readOAuthLogin(
     name: text(stored.name, "Stored OAuth login name"),
     value: text(stored.value, "Stored OAuth login value"),
   };
-  // The reference the platform resolved must still describe this exact document.
-  if (login.uid !== reference.backendRef.uid || login.name !== reference.backendRef.name) {
+  // The reference the platform resolved must still describe this exact document. Only the uid
+  // can prove that: a Secret Driver whose backend has no cluster coordinates publishes an
+  // opaque reference (the filesystem Driver hashes the Namespace and Secret names), so its
+  // `name` is a locator, not the Secret's name. The path is derived from the Namespace and
+  // Secret ids, and the uid is the one this Driver issued and stored in the document.
+  if (login.uid !== reference.backendRef.uid) {
     throw new OwnershipFailure("The staged OAuth login changed ownership.");
   }
   if (login.namespaceId !== reference.namespaceId) {
@@ -287,14 +289,7 @@ export function nativeCodexAuth(
   ) {
     throw new ConfigurationFailure("The staged OAuth credential is unavailable; sign in again.");
   }
-  return {
-    auth_mode: "chatgpt",
-    tokens: {
-      id_token: tokens.id_token,
-      access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token,
-    },
-  };
+  return auth as NativeCodexAuth;
 }
 
 /**

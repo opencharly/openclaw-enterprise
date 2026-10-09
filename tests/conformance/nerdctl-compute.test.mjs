@@ -2,7 +2,7 @@
 // helper executor. The helper process is a stub here; only
 // tests/integration/nerdctl-compute-real.test.mjs drives the real rootless engine.
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,6 +20,7 @@ import {
   transportTokenPath,
 } from "../../apps/controller/src/drivers/compute/nerdctl/credentials.ts";
 import { NerdctlComputeDriver } from "../../apps/controller/src/drivers/compute/nerdctl/index.ts";
+import { readOAuthLogin } from "../../apps/controller/src/drivers/compute/nerdctl/oauth.ts";
 import { FilesystemSecretDriver } from "../../apps/controller/src/drivers/secret/filesystem/index.ts";
 import { egressProxyName } from "../../apps/controller/src/drivers/compute/nerdctl/spec.ts";
 import {
@@ -2146,4 +2147,30 @@ test("the harness runtime command fits the kernel's per-argument limit", async (
   }
   // The readiness probe is small enough to stay a direct `-e` program.
   assert.deepEqual(agent.request.input.readiness.command.slice(0, 2), ["node", "-e"]);
+});
+
+test("a staged login is identified by the uid its Driver issued, not by the reference name", async () => {
+  // A Secret Driver with no cluster coordinates publishes an opaque locator as its backend
+  // name - the filesystem Driver hashes the Namespace and Secret names - while the document
+  // it stores carries the Secret's own name. Comparing the two would refuse every delivery
+  // on a host engine, so ownership rests on the uid the Driver issued.
+  const login = await stagedLogin();
+  assert.notEqual(login.backendRef.name, login.record.name);
+  assert.match(login.backendRef.name, /^[0-9a-f]{32}$/);
+
+  const reference = {
+    namespaceId: login.namespaceId,
+    secretId: login.secretId,
+    backendRef: login.backendRef,
+  };
+  const read = await readOAuthLogin(SECRET_STORE, reference);
+  assert.equal(read.uid, login.backendRef.uid);
+
+  await assert.rejects(
+    readOAuthLogin(SECRET_STORE, {
+      ...reference,
+      backendRef: { ...login.backendRef, uid: randomUUID() },
+    }),
+    /changed ownership/,
+  );
 });

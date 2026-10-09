@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -93,7 +93,9 @@ export class FilesystemSecretDriver implements SecretDriver {
       throw new FilesystemSecretError("A Secret already exists for this identity.");
     }
     const stored: StoredSecret = {
-      uid: randomBytes(16).toString("hex"),
+      // A UUID: this is the identity the platform persists as the backend reference, and
+      // `occ.secrets` constrains that column to UUID form.
+      uid: randomUUID(),
       namespaceId: identity.namespaceId,
       name: identity.name,
       value: requiredValue(value),
@@ -207,10 +209,19 @@ export class FilesystemSecretDriver implements SecretDriver {
     );
   }
 
+  /**
+   * The reference the platform stores beside the Secret.
+   *
+   * `occ.secrets` constrains a backend reference to Kubernetes Secret coordinates: a DNS-1123
+   * label namespace, a lowercase DNS subdomain name and a UUID uid. This Driver has no such
+   * coordinates, so it publishes the same opaque hashes it already uses for the store path
+   * plus the uid it issued. The locator therefore carries no identity, and `owned()` still
+   * compares that uid against the stored file.
+   */
   private reference(stored: StoredSecret): SecretBackendRef {
     return {
-      namespaceName: stored.namespaceId,
-      name: stored.name,
+      namespaceName: sha256Hex(stored.namespaceId, 12),
+      name: sha256Hex(stored.name, 32),
       key: SECRET_KEY,
       uid: stored.uid,
     };
