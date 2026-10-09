@@ -293,9 +293,17 @@ test("the Collector exports every OCC API and worker event the docs name", async
     ...(await sourceFiles("apps/controller/src", [".ts", ".mjs"])),
     ...(await sourceFiles("packages/occ/src", [".ts"])),
   ]) {
-    // The Kubernetes Compute Driver renders this file's events into Gateway and Codex
-    // Pods; the Collector classifies those runtime wrapper diagnostics separately.
-    if (path.endsWith("drivers/compute/kubernetes/runtime-entrypoints.ts")) {
+    // A Compute Driver renders its runtime-wrapper programs into Gateway, Agent and Codex
+    // containers; the Collector classifies those runtime diagnostics through its runtime
+    // allowlist, not through the API/worker allowlist this case checks. The shared wrapper
+    // programs used to live only in the Kubernetes module, which is why that single path was
+    // excluded; they are now shared under drivers/compute/runtime, and the Kubernetes module
+    // keeps only its Kubernetes-only programs. Exclude both, or this scan reports every
+    // container-rendered event (codex.model_probe) as an API event the Collector drops.
+    if (
+      path.includes("drivers/compute/runtime/") ||
+      path.endsWith("drivers/compute/kubernetes/runtime-entrypoints.ts")
+    ) {
       continue;
     }
     const text = await readFile(join(root, path), "utf8");

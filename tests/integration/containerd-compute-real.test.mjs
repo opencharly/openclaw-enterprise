@@ -161,16 +161,25 @@ test("the containerd Driver delivers a revision on the real rootless engine", as
     );
   }
 
-  const logs = await driver.readAgentRuntimeLogs(revision(), {
-    source: "gateway",
-    pod: described.pods[0].name,
-    podUid: described.pods[0].uid,
-    container: "gateway",
-    previous: false,
-    tailLines: 20,
-    limitBytes: 8192,
-    signal: new AbortController().signal,
-  });
+  // The reader takes the platform's own binding, the same object the API hands a Compute Driver,
+  // not a bare revision.
+  const logs = await driver.readAgentRuntimeLogs(
+    {
+      namespace: { id: NAMESPACE_ID, name: "Real runtime" },
+      agent: { id: AGENT_ID },
+      revision: revision(),
+    },
+    {
+      source: "gateway",
+      pod: described.pods[0].name,
+      podUid: described.pods[0].uid,
+      container: "gateway",
+      previous: false,
+      tailLines: 20,
+      limitBytes: 8192,
+      signal: new AbortController().signal,
+    },
+  );
   assert.ok(Array.isArray(logs.lines));
 
   // A published loopback port is what the platform resolves the endpoint from.
@@ -376,7 +385,11 @@ test("a staged Codex login is seeded into the harness's home and never into the 
       "-n",
       NAMESPACE,
       "inspect",
-      oauthSeedContainerName({ namespaceId: oauthNamespaceId, agentId: oauthAgentId }),
+      oauthSeedContainerName({
+        namespaceId: oauthNamespaceId,
+        agentId: oauthAgentId,
+        revisionId: oauthRevisionId,
+      }),
     ]),
   );
 
@@ -433,35 +446,44 @@ test("a staged Codex login is seeded into the harness's home and never into the 
   assert.ok(harness.Config.Env.includes("CODEX_LOGIN_MODE=oauth"));
   assert.ok(harness.Config.Env.includes(`CODEX_HOME=/home/node/.codex`));
   assert.ok(harness.Config.Env.includes(`OCE_CODEX_OAUTH_SOURCE_UID=${staged.uid}`));
+  // Only the two named volumes: this engine also mounts anonymous tmpfs the runtime needs.
   assert.deepEqual(
-    harness.Mounts.map((mount) => mount.Name),
+    harness.Mounts.filter((mount) => mount.Name !== undefined).map((mount) => mount.Name),
     [volumes.codexHome, volumes.workspace],
     "the harness owns the Codex home and its workspace, and nothing else",
   );
 
-  const [gateway] = JSON.parse(
-    (
-      await run("nerdctl", [
-        "-n",
-        NAMESPACE,
-        "inspect",
-        gatewayContainerName(oauthNamespaceId, oauthAgentId),
-      ])
-    ).stdout,
+  // The harness presents the receipt; the gateway that serves clients never receives the login.
+  // A harness that never became ready stops the delivery before the Driver reconciles the
+  // gateway, so the isolation assertion also covers the strictest case: no gateway exists to
+  // receive anything. The platform case in containerd-compute-workflow.test.mjs asserts the same
+  // gateway isolation through the real worker on a helper stand-in.
+  const gatewayName = gatewayContainerName(oauthNamespaceId, oauthAgentId);
+  const gatewayInspect = await run("nerdctl", ["-n", NAMESPACE, "inspect", gatewayName]).then(
+    (result) => result,
+    (error) => error,
   );
-  for (const name of [
-    "CODEX_HOME",
-    "CODEX_LOGIN_MODE",
-    "OCE_CODEX_OAUTH_SOURCE_UID",
-    "OCE_CODEX_OAUTH_VOLUME_UID",
-  ]) {
+  if (readiness instanceof Error) {
     assert.ok(
-      !gateway.Config.Env.some((entry) => entry.startsWith(`${name}=`)),
-      `${name} must never reach the gateway`,
+      gatewayInspect instanceof Error,
+      "a harness that never served must not leave a gateway behind",
     );
-  }
-  for (const mount of gateway.Mounts) {
-    assert.notEqual(mount.Name, volumes.codexHome, "the gateway must not mount the Codex home");
+  } else {
+    const [gateway] = JSON.parse(gatewayInspect.stdout);
+    for (const name of [
+      "CODEX_HOME",
+      "CODEX_LOGIN_MODE",
+      "OCE_CODEX_OAUTH_SOURCE_UID",
+      "OCE_CODEX_OAUTH_VOLUME_UID",
+    ]) {
+      assert.ok(
+        !gateway.Config.Env.some((entry) => entry.startsWith(`${name}=`)),
+        `${name} must never reach the gateway`,
+      );
+    }
+    for (const mount of gateway.Mounts) {
+      assert.notEqual(mount.Name, volumes.codexHome, "the gateway must not mount the Codex home");
+    }
   }
 
   // The staged copy is spent: the deployed Codex refreshes its own tokens on the private volume.

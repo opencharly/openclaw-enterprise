@@ -291,8 +291,9 @@ export function createWorkerRevisionFixtures(testFile) {
         }
         harnessAuth = {
           method: "oauth",
+          // No private delivery metadata: the public binding grammar admits exactly the source
+          // reference, and the revision carries the Secret Driver id separately.
           source: { kind: "secret", namespaceId: namespace.id, id: stored.id },
-          secretDriverId: stored.driverId,
         };
       } else if (serviceAccountId === undefined) {
         const identity = {
@@ -375,7 +376,11 @@ export function createWorkerRevisionFixtures(testFile) {
         }
       }
       if (
-        (harnessAuth.method === "api_key" || harnessAuth.method === "codex_pat") &&
+        (harnessAuth.method === "api_key" ||
+          harnessAuth.method === "codex_pat" ||
+          // A staged OAuth login is the Agent's own Harness Secret just as an API key is: the
+          // Agent must be authorized to operate it, or the worker refuses the delivery.
+          harnessAuth.method === "oauth") &&
         harnessAuth.source.kind === "secret" &&
         grantHarnessSecret
       ) {
@@ -530,7 +535,11 @@ export function createWorkerRevisionFixtures(testFile) {
         transformDrivers = (drivers) => drivers,
       } = {},
     ) {
-      const configuredDrivers = createBackendWorkerDrivers(computeDriver, providers ?? []);
+      // The Installation the worker validates against must name the same Secret Driver the test
+      // composed, or construction fails before the delivery ever runs.
+      const configuredDrivers = createBackendWorkerDrivers(computeDriver, providers ?? [], {
+        secretDriver,
+      });
       const drivers = transformDrivers({
         ...configuredDrivers,
         secretDriver,

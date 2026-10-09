@@ -54,3 +54,38 @@ is verified through the Agent workflow rather than here.
 [capability matrix](../reference/drivers/compute-matrix.md), separating the
 deviations the matrix records as intentional from the gaps that remain. `--check`
 exits non-zero while an undeclared gap exists.
+
+## Platform workflow and OAuth delivery
+
+`tests/integration/containerd-compute-workflow.test.mjs` drives the production worker,
+PostgreSQL state and work queue. A helper that owns an engine in a file stands in for containerd,
+so the delivery, the staged Codex OAuth handoff, its refusal paths and the Agent lifecycle run
+through the platform rather than a direct Driver call. It needs the prepared application lane
+from [PostgreSQL](postgresql.md#revision-worker-tests):
+
+```bash
+node scripts/ci/prepare.mjs --lane postgres-application \
+  --state "$RUN_DIR/state.json" --github-env "$RUN_DIR/owner.env"
+node scripts/ci/prepare.mjs --lane postgres-application \
+  --file tests/integration/containerd-compute-workflow.test.mjs \
+  --state "$RUN_DIR/state.json" --github-env "$RUN_DIR/test.env"
+env -u OCC_TEST_DATABASE_URL -u OPENCLAW_ENTERPRISE_CI_STATE -u OPENCLAW_ENTERPRISE_CI_PREFIX \
+  OCC_TEST_NERDCTL_REAL=1 \
+  node --env-file="$RUN_DIR/test.env" --test tests/integration/containerd-compute-workflow.test.mjs
+```
+
+With `OCC_TEST_NERDCTL_REAL=1` the same file also deploys, serves, logs and retires a real Agent
+on the rootless engine through the worker. Leave the variable unset to run the platform cases
+without an engine; those cases then skip.
+
+### Coverage limits
+
+- A dedicated Codex harness refuses a **synthetic** OAuth login at its own model-authentication
+  probe, so the real-engine case seeds and inspects the harness's Codex home but does not reach
+  harness readiness. Credentialed readiness needs an authorized login and is not covered here.
+- `describeAgentRuntime` cannot report a running container as ready on this engine. The helper
+  answers `inspect-container` with nerdctl's status string (`Up`), while the Driver requires
+  exactly `ready`, and only the `run-container` response ever carries that value. The Agent
+  deployment runtime API therefore reports every containerd runtime, including a gateway that is
+  serving, as not ready. The real-runtime case records this as a diagnostic instead of pinning
+  the value; the Driver or helper must agree on a probe-backed readiness state.
