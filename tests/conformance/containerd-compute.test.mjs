@@ -608,8 +608,8 @@ test("harness auth admits runtime, a dedicated Codex login or provider key, and 
     undefined,
     undefined,
   );
-  // A dedicated Codex harness is a container of its own, and one token covers both roles.
-  driver.validateHarnessAuth({ id: "codex", mode: "dedicated" }, { method: "runtime" }, {});
+  // A runtime credential is the embedded OpenClaw gateway's own, so only that topology may carry
+  // it; the next case proves a dedicated Codex harness is refused with it.
   assert.throws(
     () =>
       driver.validateHarnessAuth({ id: "openclaw", mode: "dedicated" }, { method: "runtime" }, {}),
@@ -619,6 +619,30 @@ test("harness auth admits runtime, a dedicated Codex login or provider key, and 
     () => driver.validateHarnessAuth({ id: "codex", mode: "embedded" }, { method: "runtime" }, {}),
     /always dedicated/,
   );
+});
+
+test("a dedicated Codex harness is refused a runtime credential it cannot authenticate with", () => {
+  // The shared runtime starts a dedicated Codex harness with CODEX_LOGIN_MODE=api_key, and a
+  // runtime credential delivers no key. Admitting it would start a harness that can only hold a
+  // failed authentication, so the refusal belongs at admission, before the platform spends its
+  // retry budget on a revision that cannot succeed.
+  const driver = driverWith(new RecordingExecutor());
+  assert.throws(
+    () => driver.validateHarnessAuth({ id: "codex", mode: "dedicated" }, { method: "runtime" }, {}),
+    /requires a staged provider key or a staged Codex OAuth login/,
+  );
+  assert.throws(
+    () =>
+      driverWith(
+        new RecordingExecutor(),
+        {},
+        { secretStore: { directory: "/var/lib/oce/secrets" } },
+      ).validateHarnessAuth({ id: "codex", mode: "dedicated" }, { method: "runtime" }, {}),
+    /requires a staged provider key or a staged Codex OAuth login/,
+    "a Secret store does not turn a runtime credential into a delivered key",
+  );
+  // The embedded OpenClaw gateway keeps authenticating with the runtime credential it owns.
+  driver.validateHarnessAuth({ id: "openclaw", mode: "embedded" }, { method: "runtime" }, {});
 });
 
 test("a dedicated harness is delivered beside its gateway and holds the workload credential", async () => {

@@ -76,8 +76,14 @@ env -u OCC_TEST_DATABASE_URL -u OPENCLAW_ENTERPRISE_CI_STATE -u OPENCLAW_ENTERPR
 ```
 
 With `OCC_TEST_NERDCTL_REAL=1` the same file also deploys, serves, logs and retires a real Agent
-on the rootless engine through the worker. Leave the variable unset to run the platform cases
-without an engine; those cases then skip.
+on the rootless engine through the worker. Leave the variable unset to run the three platform
+cases without an engine.
+
+The engine cases are registered only while `OCC_TEST_NERDCTL_REAL=1` is set. This file belongs to
+the prepared `postgres-application` lane, whose preparation supplies a database but no rootless
+engine, and a selected file that reports a skipped case fails the lane. Registering the cases
+only when their selector is present keeps that lane green without pretending the engine proof ran
+there; select the variable to run them.
 
 ### Real provider-key model turn
 
@@ -98,7 +104,7 @@ not, then reads the harness's own startup evidence: `codex-login` ok, `codex.mod
 `READY`, and the authenticated app-server started. The probe is one real model turn — the runtime
 requires exactly one `turn.started`/`turn.completed` pair with a non-empty agent message — and the
 revision cannot activate without it. Comparisons use digests, so a failing assertion never prints
-the credential. Without all three variables the case skips with its selector named.
+the credential. Without all three variables the case is not registered.
 
 ### Coverage limits
 

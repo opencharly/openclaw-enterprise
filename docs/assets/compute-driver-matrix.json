@@ -2542,7 +2542,7 @@
         },
         "containerd": {
           "status": "unsupported",
-          "detail": "A Backend-issued Codex account token and its workspace identity are not delivered: this Driver admits only operator-managed runtime credentials, a staged Codex OAuth login or a provider key for a dedicated Codex Harness. The harness otherwise receives whatever the workload environment carries, which the platform limits to opaque placeholders.",
+          "detail": "A Backend-issued Codex account token and its workspace identity are not delivered: this Driver admits only operator-managed runtime credentials for an embedded OpenClaw gateway, and a staged Codex OAuth login or provider key for a dedicated Codex Harness. The harness otherwise receives whatever the workload environment carries, which the platform limits to opaque placeholders.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/compute/containerd/index.ts",

@@ -630,6 +630,11 @@ test(
 // --- The real engine: the same workflow, with no stub at all ----------------------------------
 // The cases above stand in for the engine. These select the host's rootless containerd directly,
 // so they are opt-in and need the same prepared PostgreSQL lane as the cases above.
+//
+// They are registered only when their selector is present, because this file belongs to the
+// prepared application lane, whose preparation can supply a database but not a rootless engine.
+// A selected file that reports a skipped case fails that lane, and the engine cases cannot run
+// there: with the selector set they run as part of the same file (see docs/testing/containerd.md).
 
 const REAL_ENGINE = process.env.OCC_TEST_NERDCTL_REAL === "1";
 const REAL_HELPER =
@@ -643,140 +648,135 @@ async function nerdctl(args) {
   return stdout;
 }
 
-/** The real engine replaces the prepared-database requirement only when it is switched on. */
-const requiresRealEngine = {
-  skip: REAL_ENGINE
-    ? requiresPostgres.skip
-    : "set OCC_TEST_NERDCTL_REAL=1 with the prepared PostgreSQL lane to deploy on the real engine",
-};
-
-test(
-  "the worker deploys, serves, logs and retires an Agent on the real containerd engine",
-  requiresRealEngine,
-  async (context) => {
-    await access(REAL_HELPER).catch(() => {
-      throw new Error(`build the helper first (pnpm helper:containerd:build): ${REAL_HELPER}`);
-    });
-    const root = await mkdtemp(join(tmpdir(), "containerd-real-workflow-"));
-    context.after(() => rm(root, { recursive: true, force: true }));
-    const configuration = containerdConfiguration(REAL_HELPER, join(root, "credentials"));
-    // A locally built image carries no digest, so this opt-in lane runs it as a mutable reference;
-    // production keeps the Installation's immutable-digest policy.
-    configuration.images = {
-      gateway: REAL_IMAGE,
-      agent: REAL_IMAGE,
-      requireImmutableDigest: false,
-    };
-    configuration.containerd.namespace = REAL_NAMESPACE;
-    const driver = new ContainerdComputeDriver(validateConfiguration(configuration), {
-      executor: new SystemNerdctlHelperExecutor(),
-    });
-    const fixture = await setup(context, { computeDriver: driver });
-    const { owner, candidate } = await fixture.admitInitialRevision("real containerd delivery", {
-      agent: { auth: "runtime" },
-      revision: {
-        configuration: {
-          agents: { defaults: { model: "gpt-6-luna", workspace: "/home/node/workspace" } },
-          // Without an explicit local gateway mode the runtime refuses to start; without a LAN
-          // bind the published loopback port reaches nothing. Both are Agent Configuration.
-          gateway: { mode: "local", bind: "lan" },
+if (REAL_ENGINE) {
+  test(
+    "the worker deploys, serves, logs and retires an Agent on the real containerd engine",
+    requiresPostgres,
+    async (context) => {
+      await access(REAL_HELPER).catch(() => {
+        throw new Error(`build the helper first (pnpm helper:containerd:build): ${REAL_HELPER}`);
+      });
+      const root = await mkdtemp(join(tmpdir(), "containerd-real-workflow-"));
+      context.after(() => rm(root, { recursive: true, force: true }));
+      const configuration = containerdConfiguration(REAL_HELPER, join(root, "credentials"));
+      // A locally built image carries no digest, so this opt-in lane runs it as a mutable reference;
+      // production keeps the Installation's immutable-digest policy.
+      configuration.images = {
+        gateway: REAL_IMAGE,
+        agent: REAL_IMAGE,
+        requireImmutableDigest: false,
+      };
+      configuration.containerd.namespace = REAL_NAMESPACE;
+      const driver = new ContainerdComputeDriver(validateConfiguration(configuration), {
+        executor: new SystemNerdctlHelperExecutor(),
+      });
+      const fixture = await setup(context, { computeDriver: driver });
+      const { owner, candidate } = await fixture.admitInitialRevision("real containerd delivery", {
+        agent: { auth: "runtime" },
+        revision: {
+          configuration: {
+            agents: { defaults: { model: "gpt-6-luna", workspace: "/home/node/workspace" } },
+            // Without an explicit local gateway mode the runtime refuses to start; without a LAN
+            // bind the published loopback port reaches nothing. Both are Agent Configuration.
+            gateway: { mode: "local", bind: "lan" },
+          },
         },
-      },
-    });
+      });
 
-    await fixture.start(driver);
-    const result = await waitFor(
-      "the worker to activate the real revision",
-      async () => {
-        const row = (await fixture.workResult(candidate)).rows[0];
-        return row?.reason_code ? row : undefined;
-      },
-      180_000,
-    );
-    assert.equal(
-      result.reason_code,
-      "REVISION_ACTIVATED",
-      JSON.stringify(result.result_data ?? null),
-    );
-    assert.equal(
-      (await fixture.activePointer(owner)).rows[0]?.active_revision_id,
-      candidate.id,
-      "the real engine must carry an Agent that reaches an active revision",
-    );
+      await fixture.start(driver);
+      const result = await waitFor(
+        "the worker to activate the real revision",
+        async () => {
+          const row = (await fixture.workResult(candidate)).rows[0];
+          return row?.reason_code ? row : undefined;
+        },
+        180_000,
+      );
+      assert.equal(
+        result.reason_code,
+        "REVISION_ACTIVATED",
+        JSON.stringify(result.result_data ?? null),
+      );
+      assert.equal(
+        (await fixture.activePointer(owner)).rows[0]?.active_revision_id,
+        candidate.id,
+        "the real engine must carry an Agent that reaches an active revision",
+      );
 
-    // Namespace infrastructure and the runtime are engine objects the worker created, labelled
-    // for this exact Namespace and Agent rather than for the test.
-    const infra = await nerdctl([
-      "network",
-      "ls",
-      "--filter",
-      `label=org.openclaw.enterprise.namespace-id=${fixture.namespace.id}`,
-      "--format",
-      "{{.Name}}",
-    ]);
-    assert.equal(infra.trim().split("\n").filter(Boolean).length, 2, infra);
-    const containers = await nerdctl([
-      "ps",
-      "--filter",
-      `label=org.openclaw.enterprise.agent-id=${owner.id}`,
-      "--format",
-      "{{.Names}}",
-    ]);
-    assert.equal(containers.trim().split("\n").filter(Boolean).length, 1, containers);
+      // Namespace infrastructure and the runtime are engine objects the worker created, labelled
+      // for this exact Namespace and Agent rather than for the test.
+      const infra = await nerdctl([
+        "network",
+        "ls",
+        "--filter",
+        `label=org.openclaw.enterprise.namespace-id=${fixture.namespace.id}`,
+        "--format",
+        "{{.Name}}",
+      ]);
+      assert.equal(infra.trim().split("\n").filter(Boolean).length, 2, infra);
+      const containers = await nerdctl([
+        "ps",
+        "--filter",
+        `label=org.openclaw.enterprise.agent-id=${owner.id}`,
+        "--format",
+        "{{.Names}}",
+      ]);
+      assert.equal(containers.trim().split("\n").filter(Boolean).length, 1, containers);
 
-    // The endpoint the worker resolved answers from the host: the workload is serving, not just
-    // present.
-    const endpoint = driver.getGatewayEndpoint(candidate);
-    assert.match(endpoint ?? "", /^ws:\/\/127\.0\.0\.1:\d+\/$/);
-    const reachable = await fetch(`http://127.0.0.1:${new URL(endpoint).port}/healthz`);
-    assert.equal(reachable.status, 200, "the published loopback port must answer");
+      // The endpoint the worker resolved answers from the host: the workload is serving, not just
+      // present.
+      const endpoint = driver.getGatewayEndpoint(candidate);
+      assert.match(endpoint ?? "", /^ws:\/\/127\.0\.0\.1:\d+\/$/);
+      const reachable = await fetch(`http://127.0.0.1:${new URL(endpoint).port}/healthz`);
+      assert.equal(reachable.status, 200, "the published loopback port must answer");
 
-    // Logs come back from the engine's own log store through the Driver the worker used. The
-    // reader takes the platform's own binding: the same object the API hands a Compute Driver.
-    const binding = {
-      namespace: fixture.namespace,
-      agent: await fixture.currentAgent(owner),
-      revision: candidate,
-    };
-    const described = await driver.describeAgentRuntime(candidate, new AbortController().signal);
-    const logs = await driver.readAgentRuntimeLogs(binding, {
-      source: "gateway",
-      pod: described.pods[0].name,
-      podUid: described.pods[0].uid,
-      container: "gateway",
-      previous: false,
-      tailLines: 20,
-      limitBytes: 8192,
-      signal: new AbortController().signal,
-    });
-    assert.ok(logs.lines.length > 0, "the runtime's own output must be readable");
+      // Logs come back from the engine's own log store through the Driver the worker used. The
+      // reader takes the platform's own binding: the same object the API hands a Compute Driver.
+      const binding = {
+        namespace: fixture.namespace,
+        agent: await fixture.currentAgent(owner),
+        revision: candidate,
+      };
+      const described = await driver.describeAgentRuntime(candidate, new AbortController().signal);
+      const logs = await driver.readAgentRuntimeLogs(binding, {
+        source: "gateway",
+        pod: described.pods[0].name,
+        podUid: described.pods[0].uid,
+        container: "gateway",
+        previous: false,
+        tailLines: 20,
+        limitBytes: 8192,
+        signal: new AbortController().signal,
+      });
+      assert.ok(logs.lines.length > 0, "the runtime's own output must be readable");
 
-    // Deleting the Agent retires its containers through the platform lifecycle, and the
-    // Namespace teardown that follows releases the volumes and planes it created.
-    await fixture.requestDeletion(owner);
-    // Deletion is done when the Agent is gone from platform state, exactly as the teardown
-    // suite observes it; the work row's own key is an implementation detail of that path.
-    await waitFor(
-      `Agent ${owner.id} deletion`,
-      async () => ((await fixture.currentAgent(owner)) === undefined ? true : undefined),
-      180_000,
-    );
-    const remaining = await nerdctl([
-      "ps",
-      "-a",
-      "--filter",
-      `label=org.openclaw.enterprise.agent-id=${owner.id}`,
-      "--format",
-      "{{.Names}}",
-    ]);
-    assert.equal(remaining.trim(), "", "retiring an Agent must leave no container of its own");
-    const removed = await driver.deleteNamespace({
-      id: fixture.namespace.id,
-      name: fixture.namespace.name,
-    });
-    assert.equal(removed.namespaceDeleted, true, JSON.stringify(removed));
-  },
-);
+      // Deleting the Agent retires its containers through the platform lifecycle, and the
+      // Namespace teardown that follows releases the volumes and planes it created.
+      await fixture.requestDeletion(owner);
+      // Deletion is done when the Agent is gone from platform state, exactly as the teardown
+      // suite observes it; the work row's own key is an implementation detail of that path.
+      await waitFor(
+        `Agent ${owner.id} deletion`,
+        async () => ((await fixture.currentAgent(owner)) === undefined ? true : undefined),
+        180_000,
+      );
+      const remaining = await nerdctl([
+        "ps",
+        "-a",
+        "--filter",
+        `label=org.openclaw.enterprise.agent-id=${owner.id}`,
+        "--format",
+        "{{.Names}}",
+      ]);
+      assert.equal(remaining.trim(), "", "retiring an Agent must leave no container of its own");
+      const removed = await driver.deleteNamespace({
+        id: fixture.namespace.id,
+        name: fixture.namespace.name,
+      });
+      assert.equal(removed.namespaceDeleted, true, JSON.stringify(removed));
+    },
+  );
+}
 
 // --- The provider key: the model credential a dedicated Codex harness executes turns with ------
 // The credential is the operator's own, so this case is opt-in twice over: the real-engine
@@ -787,13 +787,6 @@ test(
 const REAL_MODEL = process.env.OCC_TEST_OPENAI_MODEL;
 const REAL_PROVIDER_KEY = process.env.OPENAI_API_KEY;
 
-const requiresRealProviderTurn =
-  REAL_ENGINE && REAL_MODEL !== undefined && REAL_PROVIDER_KEY !== undefined
-    ? requiresPostgres
-    : {
-        skip: "set OCC_TEST_NERDCTL_REAL=1, OPENAI_API_KEY and OCC_TEST_OPENAI_MODEL with the prepared PostgreSQL lane to prove a real provider-key model turn",
-      };
-
 /** Compares credentials without ever putting one into an assertion message. */
 function credentialDigest(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -803,180 +796,186 @@ function containerEnvironment(container) {
   return container.Config.Env;
 }
 
-test(
-  "the worker hands a staged provider key to a dedicated Codex harness that completes a real model turn",
-  requiresRealProviderTurn,
-  async (context) => {
-    await access(REAL_HELPER).catch(() => {
-      throw new Error(`build the helper first (pnpm helper:containerd:build): ${REAL_HELPER}`);
-    });
-    const root = await mkdtemp(join(tmpdir(), "containerd-real-provider-key-"));
-    context.after(() => rm(root, { recursive: true, force: true }));
-    // Composition injects the selected Secret Driver's store; the platform stages the key there
-    // and the revision carries only the reference it resolved.
-    const secrets = join(root, "secrets");
-    const secretDriver = new FilesystemSecretDriver({ directory: secrets });
-    const configuration = containerdConfiguration(REAL_HELPER, join(root, "credentials"));
-    configuration.images = {
-      gateway: REAL_IMAGE,
-      agent: REAL_IMAGE,
-      requireImmutableDigest: false,
-    };
-    configuration.containerd.namespace = REAL_NAMESPACE;
-    const driver = new ContainerdComputeDriver(validateConfiguration(configuration), {
-      executor: new SystemNerdctlHelperExecutor(),
-      secretStore: { directory: secrets },
-    });
-    const fixture = await setup(context, { computeDriver: driver, secretDriver });
-    const { owner, candidate } = await fixture.admitInitialRevision("real provider key", {
-      agent: {
-        executionMode: "dedicated",
-        auth: "secret",
-        secretValue: REAL_PROVIDER_KEY,
-      },
-      revision: {
-        configuration: {
-          // The shared Codex runtime logs in with this provider's key and probes the exact model
-          // the configuration selects.
-          agents: {
-            defaults: { model: `openai/${REAL_MODEL}`, workspace: "/home/node/workspace" },
-          },
-          gateway: { mode: "local", bind: "lan" },
+if (REAL_ENGINE && REAL_MODEL !== undefined && REAL_PROVIDER_KEY !== undefined) {
+  test(
+    "the worker hands a staged provider key to a dedicated Codex harness that completes a real model turn",
+    requiresPostgres,
+    async (context) => {
+      await access(REAL_HELPER).catch(() => {
+        throw new Error(`build the helper first (pnpm helper:containerd:build): ${REAL_HELPER}`);
+      });
+      const root = await mkdtemp(join(tmpdir(), "containerd-real-provider-key-"));
+      context.after(() => rm(root, { recursive: true, force: true }));
+      // Composition injects the selected Secret Driver's store; the platform stages the key there
+      // and the revision carries only the reference it resolved.
+      const secrets = join(root, "secrets");
+      const secretDriver = new FilesystemSecretDriver({ directory: secrets });
+      const configuration = containerdConfiguration(REAL_HELPER, join(root, "credentials"));
+      configuration.images = {
+        gateway: REAL_IMAGE,
+        agent: REAL_IMAGE,
+        requireImmutableDigest: false,
+      };
+      configuration.containerd.namespace = REAL_NAMESPACE;
+      const driver = new ContainerdComputeDriver(validateConfiguration(configuration), {
+        executor: new SystemNerdctlHelperExecutor(),
+        secretStore: { directory: secrets },
+      });
+      const fixture = await setup(context, { computeDriver: driver, secretDriver });
+      const { owner, candidate } = await fixture.admitInitialRevision("real provider key", {
+        agent: {
+          executionMode: "dedicated",
+          auth: "secret",
+          secretValue: REAL_PROVIDER_KEY,
         },
-      },
-    });
+        revision: {
+          configuration: {
+            // The shared Codex runtime logs in with this provider's key and probes the exact model
+            // the configuration selects.
+            agents: {
+              defaults: { model: `openai/${REAL_MODEL}`, workspace: "/home/node/workspace" },
+            },
+            gateway: { mode: "local", bind: "lan" },
+          },
+        },
+      });
 
-    await fixture.start(driver);
-    const result = await waitFor(
-      "the worker to activate the provider-key revision",
-      async () => {
-        const row = (await fixture.workResult(candidate)).rows[0];
-        return row?.reason_code === "REVISION_ACTIVATED" ? row : undefined;
-      },
-      300_000,
-    );
-    assert.equal(
-      result.reason_code,
-      "REVISION_ACTIVATED",
-      JSON.stringify(result.result_data ?? null),
-    );
-    assert.equal(
-      (await fixture.activePointer(owner)).rows[0]?.active_revision_id,
-      candidate.id,
-      "an Agent authenticating with a provider key must reach an active revision",
-    );
+      await fixture.start(driver);
+      const result = await waitFor(
+        "the worker to activate the provider-key revision",
+        async () => {
+          const row = (await fixture.workResult(candidate)).rows[0];
+          return row?.reason_code === "REVISION_ACTIVATED" ? row : undefined;
+        },
+        300_000,
+      );
+      assert.equal(
+        result.reason_code,
+        "REVISION_ACTIVATED",
+        JSON.stringify(result.result_data ?? null),
+      );
+      assert.equal(
+        (await fixture.activePointer(owner)).rows[0]?.active_revision_id,
+        candidate.id,
+        "an Agent authenticating with a provider key must reach an active revision",
+      );
 
-    // The key landed in exactly one container. Both comparisons use digests so a failure can
-    // never print the credential, and the test never writes it anywhere.
-    const ownership = {
-      namespaceId: fixture.namespace.id,
-      agentId: owner.id,
-      revisionId: candidate.id,
-    };
-    const [harness] = JSON.parse(
-      (await run("nerdctl", ["-n", REAL_NAMESPACE, "inspect", agentContainerName(ownership)]))
-        .stdout,
-    );
-    const harnessEnvironment = containerEnvironment(harness);
-    const harnessKey = harnessEnvironment
-      .find((entry) => entry.startsWith("OPENAI_API_KEY="))
-      ?.slice("OPENAI_API_KEY=".length);
-    assert.ok(harnessKey !== undefined, "the harness must be handed the provider key");
-    assert.equal(
-      credentialDigest(harnessKey),
-      credentialDigest(REAL_PROVIDER_KEY),
-      "the harness must hold exactly the key the platform staged",
-    );
-    assert.ok(harnessEnvironment.includes("CODEX_LOGIN_MODE=api_key"));
-    assert.ok(harnessEnvironment.includes("CODEX_HOME=/home/node/.codex"));
-    assert.ok(
-      !harness.Args.join("\n").includes(REAL_PROVIDER_KEY),
-      "the key must never travel as a container argument",
-    );
+      // The key landed in exactly one container. Both comparisons use digests so a failure can
+      // never print the credential, and the test never writes it anywhere.
+      const ownership = {
+        namespaceId: fixture.namespace.id,
+        agentId: owner.id,
+        revisionId: candidate.id,
+      };
+      const [harness] = JSON.parse(
+        (await run("nerdctl", ["-n", REAL_NAMESPACE, "inspect", agentContainerName(ownership)]))
+          .stdout,
+      );
+      const harnessEnvironment = containerEnvironment(harness);
+      const harnessKey = harnessEnvironment
+        .find((entry) => entry.startsWith("OPENAI_API_KEY="))
+        ?.slice("OPENAI_API_KEY=".length);
+      assert.ok(harnessKey !== undefined, "the harness must be handed the provider key");
+      assert.equal(
+        credentialDigest(harnessKey),
+        credentialDigest(REAL_PROVIDER_KEY),
+        "the harness must hold exactly the key the platform staged",
+      );
+      assert.ok(harnessEnvironment.includes("CODEX_LOGIN_MODE=api_key"));
+      assert.ok(harnessEnvironment.includes("CODEX_HOME=/home/node/.codex"));
+      assert.ok(
+        !harness.Args.join("\n").includes(REAL_PROVIDER_KEY),
+        "the key must never travel as a container argument",
+      );
 
-    const [gateway] = JSON.parse(
-      (
-        await run("nerdctl", [
-          "-n",
-          REAL_NAMESPACE,
-          "inspect",
-          gatewayContainerName(fixture.namespace.id, owner.id),
-        ])
-      ).stdout,
-    );
-    assert.ok(
-      !containerEnvironment(gateway).some((entry) => entry.startsWith("OPENAI_API_KEY=")),
-      "the key must never reach the gateway that serves clients",
-    );
+      const [gateway] = JSON.parse(
+        (
+          await run("nerdctl", [
+            "-n",
+            REAL_NAMESPACE,
+            "inspect",
+            gatewayContainerName(fixture.namespace.id, owner.id),
+          ])
+        ).stdout,
+      );
+      assert.ok(
+        !containerEnvironment(gateway).some((entry) => entry.startsWith("OPENAI_API_KEY=")),
+        "the key must never reach the gateway that serves clients",
+      );
 
-    // The harness's own startup evidence. `codex.model_probe` reports READY only after one real
-    // turn completed: the runtime runs `codex exec` with an authorized model, requires exactly one
-    // `turn.started`/`turn.completed` pair and a non-empty `agent_message`, and withholds its
-    // readiness until then. The revision could not have activated without that turn.
-    const binding = {
-      namespace: fixture.namespace,
-      agent: await fixture.currentAgent(owner),
-      revision: candidate,
-    };
-    const described = await driver.describeAgentRuntime(candidate, new AbortController().signal);
-    const logs = await driver.readAgentRuntimeLogs(binding, {
-      source: "agent",
-      pod: described.pods[0].name,
-      podUid: described.pods[0].uid,
-      container: "agent",
-      previous: false,
-      tailLines: 1000,
-      limitBytes: 1_048_576,
-      signal: new AbortController().signal,
-    });
-    const events = logs.lines
-      .map((line) => {
-        try {
-          return JSON.parse(line.raw);
-        } catch {
-          return undefined;
-        }
-      })
-      .filter((event) => event !== undefined);
-    const login = events.find(
-      (event) => event.event === "runtime.startup_phase" && event.phase === "codex-login",
-    );
-    assert.equal(
-      login?.outcome,
-      "ok",
-      `codex-login must succeed from the delivered key: ${JSON.stringify(login)}`,
-    );
-    const modelProbe = events.find((event) => event.event === "codex.model_probe");
-    assert.equal(
-      modelProbe?.code,
-      "READY",
-      `the model probe must complete a real turn: ${JSON.stringify(modelProbe)}`,
-    );
-    const probePhase = events.find(
-      (event) => event.event === "runtime.startup_phase" && event.phase === "model-probe",
-    );
-    assert.equal(probePhase?.outcome, "ok");
-    const agentTurn = events.find(
-      (event) => event.event === "runtime.startup_phase" && event.phase === "native-spawn",
-    );
-    assert.equal(agentTurn?.outcome, "ok", "the authenticated app-server must start its turn loop");
-    // The evidence records the phases, the probe's outcome and timings; it carries no credential.
-    console.log(
-      "provider-key delivery:",
-      JSON.stringify({ login, modelProbe, probePhase, agentTurn }),
-    );
+      // The harness's own startup evidence. `codex.model_probe` reports READY only after one real
+      // turn completed: the runtime runs `codex exec` with an authorized model, requires exactly one
+      // `turn.started`/`turn.completed` pair and a non-empty `agent_message`, and withholds its
+      // readiness until then. The revision could not have activated without that turn.
+      const binding = {
+        namespace: fixture.namespace,
+        agent: await fixture.currentAgent(owner),
+        revision: candidate,
+      };
+      const described = await driver.describeAgentRuntime(candidate, new AbortController().signal);
+      const logs = await driver.readAgentRuntimeLogs(binding, {
+        source: "agent",
+        pod: described.pods[0].name,
+        podUid: described.pods[0].uid,
+        container: "agent",
+        previous: false,
+        tailLines: 1000,
+        limitBytes: 1_048_576,
+        signal: new AbortController().signal,
+      });
+      const events = logs.lines
+        .map((line) => {
+          try {
+            return JSON.parse(line.raw);
+          } catch {
+            return undefined;
+          }
+        })
+        .filter((event) => event !== undefined);
+      const login = events.find(
+        (event) => event.event === "runtime.startup_phase" && event.phase === "codex-login",
+      );
+      assert.equal(
+        login?.outcome,
+        "ok",
+        `codex-login must succeed from the delivered key: ${JSON.stringify(login)}`,
+      );
+      const modelProbe = events.find((event) => event.event === "codex.model_probe");
+      assert.equal(
+        modelProbe?.code,
+        "READY",
+        `the model probe must complete a real turn: ${JSON.stringify(modelProbe)}`,
+      );
+      const probePhase = events.find(
+        (event) => event.event === "runtime.startup_phase" && event.phase === "model-probe",
+      );
+      assert.equal(probePhase?.outcome, "ok");
+      const agentTurn = events.find(
+        (event) => event.event === "runtime.startup_phase" && event.phase === "native-spawn",
+      );
+      assert.equal(
+        agentTurn?.outcome,
+        "ok",
+        "the authenticated app-server must start its turn loop",
+      );
+      // The evidence records the phases, the probe's outcome and timings; it carries no credential.
+      console.log(
+        "provider-key delivery:",
+        JSON.stringify({ login, modelProbe, probePhase, agentTurn }),
+      );
 
-    // Deleting the Agent retires the harness, and the Namespace teardown releases the volumes.
-    await fixture.requestDeletion(owner);
-    await waitFor(
-      `Agent ${owner.id} deletion`,
-      async () => ((await fixture.currentAgent(owner)) === undefined ? true : undefined),
-      180_000,
-    );
-    const removed = await driver.deleteNamespace({
-      id: fixture.namespace.id,
-      name: fixture.namespace.name,
-    });
-    assert.equal(removed.namespaceDeleted, true, JSON.stringify(removed));
-  },
-);
+      // Deleting the Agent retires the harness, and the Namespace teardown releases the volumes.
+      await fixture.requestDeletion(owner);
+      await waitFor(
+        `Agent ${owner.id} deletion`,
+        async () => ((await fixture.currentAgent(owner)) === undefined ? true : undefined),
+        180_000,
+      );
+      const removed = await driver.deleteNamespace({
+        id: fixture.namespace.id,
+        name: fixture.namespace.name,
+      });
+      assert.equal(removed.namespaceDeleted, true, JSON.stringify(removed));
+    },
+  );
+}

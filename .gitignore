@@ -7,6 +7,7 @@
 node_modules/
 /bin/occ
 /bin/compute-containerd
+/bin/openshell-driver-containerd
 target/
 dist/
 .build/

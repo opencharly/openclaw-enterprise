@@ -89,6 +89,11 @@ and to no other container. The harness starts with `CODEX_LOGIN_MODE=api_key`, l
 its model probe; the gateway receives the transport endpoint and token only. Both deliveries read
 the store through `secret-store.ts`, the one place that names its layout.
 
+Admission is the gate in front of both: `validateHarnessAuth` (`index.ts:337`) requires a staged
+provider key or a staged OAuth login for a dedicated Codex harness, and accepts the
+operator-managed runtime credential only for the embedded OpenClaw gateway — the one harness that
+authenticates with a credential of its own.
+
 ### 3. Runtime start and readiness
 
 `apps/controller/src/drivers/compute/containerd/index.ts:reconcileAgent`
@@ -152,3 +157,4 @@ memory.
 ## Changelog
 
 - 2026-10-09 23:55: Cut the paired-SandboxDriver delegation, and documented the staged provider-key delivery, the self-contained harness readiness probe and the initializer's login-clearing order. (containerd-driver-finisher - 8643323fe)
+- 2026-10-10 00:20: Documented the admission gate that keeps a runtime credential to the embedded OpenClaw gateway, and the rebase onto origin/main. (containerd-driver-finisher - 34e8d09f7)

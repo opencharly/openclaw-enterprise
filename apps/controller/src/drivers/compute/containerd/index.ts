@@ -330,9 +330,10 @@ export class ContainerdComputeDriver implements ComputeDriver {
   }
 
   /**
-   * Operator-managed runtime credentials, the operator's staged provider key or Codex OAuth
-   * login for a dedicated Codex Harness. `codex_pat` stays refused: a Backend-issued account
-   * token still has no delivery path to exactly one container on this engine.
+   * Operator-managed runtime credentials for the embedded OpenClaw gateway, and the operator's
+   * staged provider key or Codex OAuth login for a dedicated Codex Harness. `codex_pat` stays
+   * refused: a Backend-issued account token still has no delivery path to exactly one container
+   * on this engine.
    */
   validateHarnessAuth(
     harness: RevisionHarnessDescriptor,
@@ -390,11 +391,22 @@ export class ContainerdComputeDriver implements ComputeDriver {
       }
       return;
     }
-    if (auth?.method !== "runtime") {
-      throw new ConfigurationFailure(
-        "compute-containerd requires operator-managed runtime credentials, a staged Codex provider key, or a staged Codex OAuth login.",
-      );
+    if (auth?.method === "runtime") {
+      if (harness.id === "codex") {
+        // A dedicated Codex Harness logs in from a credential this Driver delivers: the shared
+        // runtime starts it with CODEX_LOGIN_MODE=api_key, so a runtime revision hands it no key
+        // and can only fail. Refuse the configuration instead of retrying it until the budget runs
+        // out. The embedded OpenClaw gateway is the harness that authenticates with a runtime
+        // credential of its own.
+        throw new ConfigurationFailure(
+          "A dedicated Codex harness requires a staged provider key or a staged Codex OAuth login.",
+        );
+      }
+      return;
     }
+    throw new ConfigurationFailure(
+      "compute-containerd requires operator-managed runtime credentials, a staged Codex provider key, or a staged Codex OAuth login.",
+    );
   }
 
   /**

@@ -194,10 +194,15 @@ will not place a workload on the no-egress plane without one:
 
 Without a proxy in the Installation, workloads keep the edge plane and their egress is ungated.
 
-Select `harnessAuth: { "method": "runtime" }` and supply the model credential to the
-runtime. A **dedicated Codex harness** runs as its own revision-scoped container beside the
-Agent's gateway, created before it and removed with it, with one persisted transport token
-that both roles present and the gateway reaching the harness by name on the Agent's plane.
+An **embedded OpenClaw gateway** is the harness that authenticates with
+`harnessAuth: { "method": "runtime" }`: the operator supplies the model credential to the
+runtime the gateway hosts, and a dedicated Codex harness is refused with that method because the
+shared runtime would start it with `CODEX_LOGIN_MODE=api_key` and no key.
+
+A **dedicated Codex harness** runs as its own revision-scoped container beside the Agent's
+gateway, created before it and removed with it, with one persisted transport token that both roles
+present and the gateway reaching the harness by name on the Agent's plane. It authenticates from a
+credential this Driver delivers: a staged Codex OAuth login or a staged provider key.
 The harness program is roughly 135 KB — above Linux's 128 KiB limit for a single exec argument —
 so it runs under the runtime image's `tini` as the repository's fixed loader plus compressed
 program pieces, the same bounded command the Kubernetes Harness uses. Passing it as one `-e`

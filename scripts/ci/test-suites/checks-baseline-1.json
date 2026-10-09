@@ -41,10 +41,8 @@
     "tests/integration/production-image-upgrade.test.mjs",
     "tests/conformance/test-files.test.mjs",
     "tests/integration/production-controller-security.test.mjs",
-    "tests/integration/sandbox-driver-startup.test.mjs",
     "tests/conformance/kubernetes-runtime-credentials.test.mjs",
     "tests/conformance/openshell-gateway-wire.test.mjs",
-    "tests/conformance/openshell-harness-status.test.mjs",
     "tests/integration/bootstrap-volume.test.mjs",
     "tests/integration/secret-driver-startup.test.mjs",
     "tests/conformance/kubernetes-configuration.test.mjs",
@@ -79,7 +77,11 @@
     "tests/conformance/slack-configuration.test.mjs",
     "tests/conformance/grafana-overview-dashboard.test.mjs",
     "tests/conformance/split-layout-tenants.test.mjs",
-    "tests/conformance/split-layout-adopt.test.mjs"
+    "tests/conformance/split-layout-adopt.test.mjs",
+    "tests/conformance/containerd-compute.test.mjs",
+    "tests/conformance/filesystem-secret-driver.test.mjs",
+    "tests/integration/configuration-driver-startup.test.mjs",
+    "tests/integration/containerd-compute-startup.test.mjs"
   ],
   "files": [
     {
@@ -182,9 +184,6 @@
       "path": "tests/conformance/openshell-gateway-wire.test.mjs"
     },
     {
-      "path": "tests/conformance/openshell-harness-status.test.mjs"
-    },
-    {
       "path": "tests/conformance/platform-state-memory.test.mjs"
     },
     {
@@ -271,12 +270,6 @@
       "path": "tests/integration/production-image-upgrade.test.mjs"
     },
     {
-      "path": "tests/integration/sandbox-driver-startup.test.mjs",
-      "expectedTests": [
-        "OpenShell reconciles renewed workspace-node setup into its revision provider"
-      ]
-    },
-    {
       "path": "tests/integration/secret-api.test.mjs"
     },
     {
@@ -329,6 +322,18 @@
     },
     {
       "path": "tests/conformance/split-layout-adopt.test.mjs"
+    },
+    {
+      "path": "tests/conformance/containerd-compute.test.mjs"
+    },
+    {
+      "path": "tests/conformance/filesystem-secret-driver.test.mjs"
+    },
+    {
+      "path": "tests/integration/configuration-driver-startup.test.mjs"
+    },
+    {
+      "path": "tests/integration/containerd-compute-startup.test.mjs"
     }
   ]
 }
