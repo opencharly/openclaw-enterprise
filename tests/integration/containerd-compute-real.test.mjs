@@ -4,7 +4,6 @@
 // tests/conformance/containerd-compute.test.mjs.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
@@ -277,15 +276,14 @@ function stagedLoginSession(namespaceId) {
 
 /**
  * Reads the dedicated Codex home through a container that mounts it the way the harness does.
- * The probe prints only a digest and the receipt, so a credential never reaches test output.
+ * The home always holds the synthetic `OAUTH_BUNDLE` this file stages, so the probe prints the
+ * file itself and the test compares it byte for byte against what it staged.
  */
 const CODEX_HOME_PROBE = String.raw`
 const fs = require("node:fs");
-const crypto = require("node:crypto");
-const authText = fs.readFileSync("/probe/auth.json", "utf8");
 const receipt = JSON.parse(fs.readFileSync("/probe/.oce-oauth.json", "utf8"));
 process.stdout.write(JSON.stringify({
-  authSha256: crypto.createHash("sha256").update(authText).digest("hex"),
+  authText: fs.readFileSync("/probe/auth.json", "utf8"),
   authMode: (fs.statSync("/probe/auth.json").mode & 0o777).toString(8),
   receipt,
   sessionsPresent: fs.existsSync("/probe/sessions"),
@@ -319,11 +317,6 @@ test("a staged Codex login is seeded into the harness's home and never into the 
     { id: secretId, namespaceId: oauthNamespaceId, name: secretName },
     stagedLoginSession(oauthNamespaceId),
   );
-  // The seeder writes the bundle the shared runtime logs in from, so the home must hold exactly
-  // the credential the platform staged — compared by digest, never by echoing it.
-  const expectedAuthSha256 = createHash("sha256")
-    .update(JSON.stringify(OAUTH_BUNDLE))
-    .digest("hex");
 
   const driver = new ContainerdComputeDriver(configuration(join(root, "credentials")), {
     executor: new SystemNerdctlHelperExecutor(),
@@ -411,9 +404,12 @@ test("a staged Codex login is seeded into the harness's home and never into the 
       ])
     ).stdout,
   );
+  // The seeder writes the bundle the shared runtime logs in from, so the home must hold exactly
+  // what this file staged — compared byte for byte. The bundle is the synthetic fixture above,
+  // never an operator credential.
   assert.equal(
-    probe.authSha256,
-    expectedAuthSha256,
+    probe.authText,
+    JSON.stringify(OAUTH_BUNDLE),
     "the harness home must hold exactly the staged bundle",
   );
   assert.equal(probe.authMode, "600", "the credential file is owner-only");

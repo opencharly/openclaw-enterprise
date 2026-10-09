@@ -4,7 +4,6 @@
 // the wire protocol; every line of Driver code between the worker and that path runs for real.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -787,11 +786,6 @@ if (REAL_ENGINE) {
 const REAL_MODEL = process.env.OCC_TEST_OPENAI_MODEL;
 const REAL_PROVIDER_KEY = process.env.OPENAI_API_KEY;
 
-/** Compares credentials without ever putting one into an assertion message. */
-function credentialDigest(value) {
-  return createHash("sha256").update(value).digest("hex");
-}
-
 function containerEnvironment(container) {
   return container.Config.Env;
 }
@@ -860,8 +854,7 @@ if (REAL_ENGINE && REAL_MODEL !== undefined && REAL_PROVIDER_KEY !== undefined) 
         "an Agent authenticating with a provider key must reach an active revision",
       );
 
-      // The key landed in exactly one container. Both comparisons use digests so a failure can
-      // never print the credential, and the test never writes it anywhere.
+      // The key landed in exactly one container, and the test never writes it anywhere.
       const ownership = {
         namespaceId: fixture.namespace.id,
         agentId: owner.id,
@@ -872,14 +865,12 @@ if (REAL_ENGINE && REAL_MODEL !== undefined && REAL_PROVIDER_KEY !== undefined) 
           .stdout,
       );
       const harnessEnvironment = containerEnvironment(harness);
-      const harnessKey = harnessEnvironment
-        .find((entry) => entry.startsWith("OPENAI_API_KEY="))
-        ?.slice("OPENAI_API_KEY=".length);
-      assert.ok(harnessKey !== undefined, "the harness must be handed the provider key");
-      assert.equal(
-        credentialDigest(harnessKey),
-        credentialDigest(REAL_PROVIDER_KEY),
-        "the harness must hold exactly the key the platform staged",
+      // The environment must hold the key this test staged, compared as the actual material. The
+      // membership assertion carries the value for comparison but prints only its own message when
+      // it fails, so a real credential never reaches the log.
+      assert.ok(
+        harnessEnvironment.includes(`OPENAI_API_KEY=${REAL_PROVIDER_KEY}`),
+        "the harness environment must hold exactly the provider key the platform staged",
       );
       assert.ok(harnessEnvironment.includes("CODEX_LOGIN_MODE=api_key"));
       assert.ok(harnessEnvironment.includes("CODEX_HOME=/home/node/.codex"));
