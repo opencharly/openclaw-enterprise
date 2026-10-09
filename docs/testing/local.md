@@ -60,8 +60,8 @@ The local [integration tests](../../tests/integration) include these groups:
 
 - `occ-api`, `configuration-controller`, `secret-api`, and `service-api-keys`:
   actual Fastify routes with test Drivers and in-memory state.
-- `controller-lifecycle`, `configuration-startup`, `secret-driver-startup`, and
-  `sandbox-driver-startup`: admission, lifecycle, and startup validation.
+- `controller-lifecycle`, `configuration-startup`, and `secret-driver-startup`:
+  admission, lifecycle, and startup validation.
 - `production-controller-security` and `production-healthcheck`: internal
   request admission, HTTP cancellation, and readiness-marker behavior.
 - `driver-plugin-installation` and `git-hooks`: local package installation,

@@ -33,7 +33,12 @@ details live — labels, name store, resource limits, CNI wiring.
 Two operations normally belong to the `nerdctl` CLI, and the helper serves them itself:
 containerd invokes it as each container's **OCI hook** and **log shim**. That is why
 containerd records the helper's own path as the container's log driver and hook, and why
-the file must stay exactly where the Installation names it. The helper never executes the
+the file must stay exactly where the Installation names it. **Moving or renaming that binary
+invalidates container state created before the move**: those containers keep invoking the old
+path and fail with `failed to execute …/compute-nerdctl: No such file or directory`, in their
+hook or log reads, while the engine still lists them as running. Recreate the revision, which
+creates its containers against the new path; the Agent's volumes and its Codex home are
+unaffected, so a consumed OAuth login stays valid. The helper never executes the
 `nerdctl` binary; nothing on the delivery path shells out to it.
 
 The controller and the worker run **on the host**, not in a container, because the
@@ -208,46 +213,44 @@ that login, reserves it for the exact Agent and Codex home, writes the native `a
 the `.oce-oauth.json` receipt into the Codex volume through a one-shot seeder, and then replaces
 the staged login with a consumed marker. The harness starts with `CODEX_LOGIN_MODE=oauth` and the
 two `OCE_CODEX_OAUTH_*` receipt identities; the shared runtime logs in from the seeded bundle and
-runs its model probe before serving. Only `runtime` and a dedicated Codex `oauth` login are
-admitted: `api_key` and `codex_pat` still need Secret-backed key delivery to exactly one
-container, and `credential_source` needs a paired Credential Gateway.
+runs its model probe before serving.
 
-Read that delivery as the trust boundary it is: the Compute Driver reads the Secret Driver's
-store to consume the login, exactly as the Kubernetes Compute Driver reads the same login
+`harnessAuth: { "method": "api_key" }` is accepted for a dedicated Codex harness whose primary
+model is an `openai/` or `codex/` reference. The Driver reads the key from the same Secret store
+under the same ownership proof as the login, and hands it to the harness container as
+`OPENAI_API_KEY`, exactly as the Kubernetes Compute Driver projects its Secret; the shared runtime
+logs in with `codex login --with-api-key`, deletes the variable from its process environment, and
+runs its model probe before serving. The key never enters argv, a log line, a file, the gateway
+container, or the controller's persisted state. `codex_pat` is still refused: a Backend-issued
+account token has no delivery path to exactly one container here, and `credential_source` needs a
+paired Credential Gateway this engine does not hold.
+
+Read both deliveries as the trust boundary they are: the Compute Driver reads the Secret Driver's
+store to consume the credential, exactly as the Kubernetes Compute Driver reads the same Secret
 through its cluster's Secret API. Composition injects the store the selected Secret Driver
-already owns, so the operator never names the path twice, and the bundle is never placed in an
-environment variable, argv, a log line, the gateway container, or the controller.
+already owns, so the operator never names the path twice. The OAuth bundle is never placed in an
+environment variable, argv, a log line, the gateway container, or the controller; the provider key
+is placed in the harness container's environment alone, as the Kubernetes path projects it, and
+the runtime removes it before serving.
 
 A login is spent by the first delivery that seeds it. A failed handoff leaves it reserved but
 unspent, so a retry finishes it; losing the Codex volume after consumption means a new sign-in.
 A revision delivered without OAuth clears any earlier `auth.json` and receipt from the Codex
 volume, so a personal login cannot keep refreshing on the Agent's disk.
 
-Pairing a **Sandbox Driver** moves that dedicated harness out of this engine: the Driver
-provisions it through the paired Sandbox Driver, waits for it to serve, and points the gateway at
-the provider-owned endpoint with the same transport token instead of starting a container of its
-own. Stopping or retiring the revision, and deleting the Namespace, delete the Sandbox through
-that Driver. A **Credential Gateway** can therefore pair with `compute-containerd`: it requires the
-Sandbox Driver it attaches sources to, and withdrawing a source resolves the revision's Sandbox
-through the paired driver. The Sandbox must be the bundled OpenShell driver with
-`gateway.workspaceMode: managed`, because this engine has no Kubernetes object client; that mode
-refuses the operator resources, labels, and readiness a Kubernetes placement would apply, and its
-`openshell` Backend must name the gateway `endpoint` this host dials. Pairing does not itself
-change which `harnessAuth` methods are admitted;
-[TASK-0046](../../../specs/plans/46-host-engine-credential-parity.md) records that remaining work.
-That path is not usable today: the isolation boundary the real OpenShell supervisor requires is not
-implemented, so no Sandbox can be started on this engine and `CreateSandbox` fails closed.
+This Driver does not pair with a **Sandbox Driver**. It holds no Sandbox placement, so a paired
+Sandbox Driver would own no workload: composition refuses `drivers.sandbox` with
+`compute-containerd` instead of composing a pairing this engine cannot serve, and a dedicated
+Codex harness always runs as this Driver's own revision-scoped container. A **Credential Gateway**
+cannot pair with it either, for the same reason the platform admits a credential gateway only
+with a Sandbox Driver.
 
 Three rows remain out of reach for a host engine: service-principal workload identity, OCC Secret
 bindings, and a Backend-issued account token. All three reach a workload through a **Credential
 Gateway**, and the platform admits a credential gateway only with a paired **Sandbox Driver**
 (`worker.ts:893`), whose supervisor substitutes a credential on matching outbound requests while
-the workload holds only a placeholder.
-
-That is the same missing piece the `sandbox` row records, so all three rows are
-consequences of one deviation rather than separate gaps, and the capability matrix says so in
-each of their cells. [TASK-0046](../../../specs/plans/46-host-engine-credential-parity.md) records
-what would close them, and the decision it waits on.
+the workload holds only a placeholder. [TASK-0046](../../../specs/plans/46-host-engine-credential-parity.md)
+records what would close them, and the decision it waits on.
 
 ## Troubleshooting
 

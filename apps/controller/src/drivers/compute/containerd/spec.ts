@@ -391,6 +391,19 @@ export const GATEWAY_READINESS_COMMAND: readonly string[] = Object.freeze([
 ]);
 
 /**
+ * The readiness probe the dedicated harness reports on. The helper runs every probe with a fixed
+ * minimal environment and cwd `/`, so the shared Harness entrypoint — which needs the container's
+ * own variables and its module path — cannot run there. The Codex app-server this harness starts
+ * answers HTTP on its local transport port, and a healthy answer is what readiness means here;
+ * the runtime withholds that answer until its own model probe has completed a real model turn.
+ */
+export const HARNESS_READINESS_COMMAND: readonly string[] = Object.freeze([
+  "node",
+  "-e",
+  `fetch("http://127.0.0.1:${AGENT_TRANSPORT_PORT}/readyz").then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));`,
+]);
+
+/**
  * gatewayContainerSpec renders the OpenClaw runtime that hosts an embedded harness. The
  * configuration travels in the environment so the container needs no host file, and the
  * state and workspace volumes are the Agent's durable storage.

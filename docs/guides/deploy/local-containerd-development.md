@@ -241,9 +241,10 @@ labels are checked; deleting resources by hand bypasses that check.
 
 ## Limits
 
-- **Dedicated Codex is not available.** `validateHarnessAuth` accepts only operator-managed
-  runtime credentials today, so a dedicated Codex Agent is refused rather than started
-  half-configured.
+- **Dedicated Codex needs a staged credential.** `validateHarnessAuth` accepts operator-managed
+  runtime credentials for an embedded OpenClaw Agent, and for a dedicated Codex harness a staged
+  provider key (`api_key` with an `openai/` or `codex/` primary model) or a staged Codex OAuth
+  login. A dedicated Codex Agent without one is refused rather than started half-configured.
 - **No Sandbox Driver.** A Sandbox Driver is a Kubernetes Gateway; selecting one with
   `compute-containerd` is refused.
 - **Repository credentials require Kubernetes.** `drivers.repo` composes only with the

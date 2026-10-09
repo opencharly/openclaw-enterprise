@@ -15,13 +15,8 @@ import type {
   ComputePrepareRevisionFailureDiagnostic,
   ComputeReadiness,
   ComputeRevisionContext,
-  CredentialAttachmentStatus,
-  CredentialGatewayDriver,
-  CredentialSource,
-  CredentialSourceAttachment,
   Driver,
   HarnessAuthSnapshot,
-  HarnessWorkloadRequirements,
   Namespace,
   NamespaceDeleteResult,
   NamespaceEnsureResult,
@@ -29,16 +24,12 @@ import type {
   RevisionHarnessDescriptor,
   RuntimeDiagnosticCheck,
   RuntimeImage,
-  SandboxDriver,
-  SandboxNamespaceContext,
-  SandboxResourceRef,
   SecretBindings,
   WorkspaceSetup,
   CredentialSourceType,
 } from "@openclaw-enterprise/contracts";
 import { createServer } from "node:net";
-import { immutableCopy, sha256Hex } from "@openclaw-enterprise/utils";
-import { DependencyUnavailableError } from "@openclaw-enterprise/occ";
+import { immutableCopy, sha256Hex, splitModelRef } from "@openclaw-enterprise/utils";
 import type { NerdctlHelperExecutor, NerdctlHelperResult } from "./executor.ts";
 import { SystemNerdctlHelperExecutor } from "./executor.ts";
 import {
@@ -68,6 +59,7 @@ import {
   egressProxySpec,
   gatewayContainerName,
   gatewayContainerSpec,
+  HARNESS_READINESS_COMMAND,
   relayContainerName,
   relaySpec,
   limitLabels,
@@ -111,17 +103,20 @@ import {
   writeOAuthSeedPayload,
 } from "./oauth.ts";
 import { gatewayConfigurationDocument } from "./gateway-configuration.ts";
+import { readStoredSecretValue } from "./secret-store.ts";
 import {
   pollHarnessDeviceAuthorization,
   startHarnessDeviceAuthorization,
 } from "../runtime/device-auth.ts";
 import { discoverHarnessModels } from "../runtime/model-discovery.ts";
-import { AGENT_READINESS_ENTRYPOINT, AGENT_RUNTIME_ENTRYPOINT } from "../runtime/agent.ts";
+import { AGENT_RUNTIME_ENTRYPOINT } from "../runtime/agent.ts";
 import { RUNTIME_WRAPPER_COMMAND } from "../runtime/node-program.ts";
 import { nodeProgramArguments } from "../runtime/node-program.ts";
-import { currentComputeAbortSignal } from "../runtime/operation-context.ts";
 import { GATEWAY_PASSWORD_ENV } from "../runtime/gateway.ts";
 import { ComputeLifecycleDispatcher } from "../runtime/lifecycle-hooks.ts";
+
+/** A gateway liveness probe must be cheap: describe runs per console view. */
+const GATEWAY_LIVENESS_TIMEOUT_MS = 2_000;
 
 class HelperFailure extends Error {
   // Node runs these modules in strip-only TypeScript mode, which rejects constructor
@@ -156,9 +151,6 @@ export interface ContainerdComputeDriverSelection {
   readonly implementation?: string;
   readonly executor?: NerdctlHelperExecutor;
   readonly lifecycleDrivers?: readonly Driver[];
-  /** Provisions the dedicated Harness outside this engine; see `sandboxHarnessDriver`. */
-  readonly sandboxDriver?: SandboxDriver;
-  readonly credentialGatewayDriver?: CredentialGatewayDriver;
   /**
    * The selected Secret Driver's store, injected by composition. This Driver reads the staged
    * Codex OAuth login from it, the same way the Kubernetes Compute Driver reads its cluster's
@@ -199,8 +191,6 @@ export class ContainerdComputeDriver implements ComputeDriver {
 
   private readonly options: ContainerdComputeDriverOptions;
   private readonly executor: NerdctlHelperExecutor;
-  private readonly sandboxDriver: SandboxDriver | undefined;
-  private readonly credentialGatewayDriver: CredentialGatewayDriver | undefined;
   /** The Secret Driver's store, read only to consume a staged Codex OAuth login. */
   private readonly secretStoreDirectory: string | undefined;
   private readonly engine: {
@@ -222,15 +212,6 @@ export class ContainerdComputeDriver implements ComputeDriver {
     this.options = immutableCopy(options);
     this.executor = selection.executor ?? new SystemNerdctlHelperExecutor();
     this.lifecycle = new ComputeLifecycleDispatcher(selection.lifecycleDrivers ?? []);
-    this.sandboxDriver = selection.sandboxDriver;
-    if (selection.credentialGatewayDriver !== undefined && selection.sandboxDriver === undefined) {
-      // The Credential Gateway attaches sources to the paired Sandbox; without one there is no
-      // workload to attach to, exactly as the Kubernetes Compute Driver refuses the pairing.
-      throw new ConfigurationFailure(
-        "The Credential Gateway Driver requires a paired Sandbox Driver.",
-      );
-    }
-    this.credentialGatewayDriver = selection.credentialGatewayDriver;
     const storeDirectory = selection.secretStore?.directory;
     if (
       storeDirectory !== undefined &&
@@ -305,10 +286,6 @@ export class ContainerdComputeDriver implements ComputeDriver {
       // ever placed on the no-egress plane without a route out.
       await this.ensureEgressProxy(namespace.id);
       await this.lifecycle.afterNamespacePrepared(namespace);
-      // A paired SandboxDriver owns its Workspace in the Gateway; this engine owns the networks.
-      await this.sandboxDriver?.ensureNamespace?.(
-        this.sandboxNamespaceContext(this.sandboxPlacement(namespace)),
-      );
       return { ...result, namespaceReady: true };
     } catch (error) {
       for (const network of created.reverse()) {
@@ -325,11 +302,6 @@ export class ContainerdComputeDriver implements ComputeDriver {
     const result = { namespaceId: namespace.id, namespaceDeleted: false };
     try {
       await this.lifecycle.beforeNamespaceDelete(namespace);
-      // The Sandboxes go before the volumes they hold, so a Workspace this Driver no longer
-      // intends to keep cannot block storage removal.
-      await this.sandboxDriver?.cleanup(
-        this.sandboxNamespaceContext(this.sandboxPlacement(namespace)),
-      );
       const ownership = { namespaceId: namespace.id };
       const selector = `${MANAGED_LABEL}=${MANAGED_VALUE},${NAMESPACE_LABEL}=${namespace.id}`;
       const listed = await this.invoke("list-containers", { labelSelector: selector });
@@ -358,14 +330,14 @@ export class ContainerdComputeDriver implements ComputeDriver {
   }
 
   /**
-   * Operator-managed runtime credentials, and the operator's staged Codex OAuth login for a
-   * dedicated Codex Harness. A Secret-backed key still has no delivery path to exactly one
-   * container on this engine, so `api_key` and `codex_pat` stay refused.
+   * Operator-managed runtime credentials, the operator's staged provider key or Codex OAuth
+   * login for a dedicated Codex Harness. `codex_pat` stays refused: a Backend-issued account
+   * token still has no delivery path to exactly one container on this engine.
    */
   validateHarnessAuth(
     harness: RevisionHarnessDescriptor,
     auth: HarnessAuthSnapshot,
-    _configuration: OpenClawConfigurationDocument,
+    configuration: OpenClawConfigurationDocument,
     _secretBindings?: SecretBindings,
     _credentialSourceType?: CredentialSourceType,
   ): void {
@@ -379,6 +351,31 @@ export class ContainerdComputeDriver implements ComputeDriver {
     }
     if (harness.id === "openclaw" && harness.mode !== "embedded") {
       throw new ConfigurationFailure("An OpenClaw harness is embedded in its own gateway.");
+    }
+    if (auth?.method === "api_key") {
+      if (harness.id !== "codex" || harness.mode !== "dedicated") {
+        throw new ConfigurationFailure(
+          "A provider API key is delivered to a dedicated Codex harness only.",
+        );
+      }
+      // The key reaches the harness as the OpenAI provider's environment variable, exactly as
+      // the Kubernetes Compute Driver projects its Secret. Another provider's model would be
+      // handed the wrong credential, so the admission refuses rather than failing at startup.
+      const model = harnessPrimaryModel(configuration);
+      const provider = model === undefined ? undefined : splitModelRef(model).provider;
+      if (provider !== "openai" && provider !== "codex") {
+        throw new ConfigurationFailure(
+          "A provider API key requires an openai/ or codex/ primary model.",
+        );
+      }
+      if (this.secretStoreDirectory === undefined) {
+        // The key lives in the selected Secret Driver's store; without it this Driver could admit
+        // the revision and then be unable to deliver the credential.
+        throw new ConfigurationFailure(
+          "A provider API key requires the selected Secret Driver's store; select a filesystem Secret Driver.",
+        );
+      }
+      return;
     }
     if (auth?.method === "oauth") {
       if (harness.id !== "codex") {
@@ -394,10 +391,8 @@ export class ContainerdComputeDriver implements ComputeDriver {
       return;
     }
     if (auth?.method !== "runtime") {
-      // TODO(P9): `api_key` and `codex_pat` still need Secret-backed key delivery to exactly
-      // one container, as the dedicated Codex Agent requires.
       throw new ConfigurationFailure(
-        "compute-containerd requires operator-managed runtime credentials or a staged Codex OAuth login.",
+        "compute-containerd requires operator-managed runtime credentials, a staged Codex provider key, or a staged Codex OAuth login.",
       );
     }
   }
@@ -421,16 +416,6 @@ export class ContainerdComputeDriver implements ComputeDriver {
     if (!this.accepts(revision)) {
       return result;
     }
-    if (
-      (context?.credentialSources?.length ?? 0) > 0 &&
-      this.sandboxDriverForRevision(revision)?.provisionHarness === undefined
-    ) {
-      // A source attaches to a Sandbox this engine cannot create, so the delivery is refused
-      // before it touches the engine or the platform stops the predecessor it would replace.
-      throw new ConfigurationFailure(
-        "Agent credential sources require a Sandbox Driver that provisions the Harness.",
-      );
-    }
     const ownership = { namespaceId: revision.namespaceId, agentId: revision.agentId };
     await this.admitNamespaceBudget(ownership, revision.id);
     const prepared = immutableCopy(revision);
@@ -444,6 +429,7 @@ export class ContainerdComputeDriver implements ComputeDriver {
       // to the workload user, so delivery does not ensure them a second time.
       const dedicated = prepared.harness.mode === "dedicated";
       const oauthRequested = dedicated && context?.harnessAuth.method === "oauth";
+      const providerKeyRequested = dedicated && context?.harnessAuth.method === "api_key";
       await this.prepareWorkspaceStorage(prepared, context?.workspaceSetup, {
         dedicated,
         oauth: oauthRequested,
@@ -459,39 +445,30 @@ export class ContainerdComputeDriver implements ComputeDriver {
       const planes =
         egress === undefined ? undefined : [networkName(revision.namespaceId, "internal")];
       const proxyEnvironment = this.proxyEnvironment(revision.namespaceId);
-      // A paired SandboxDriver provisions the dedicated Harness as a provider-owned Sandbox
-      // instead of a container on this engine, and the Gateway reaches it through the provider
-      // endpoint. The Harness environment therefore travels with the Sandbox request.
       // The operator's staged OAuth login is consumed here, after the lifecycle hook has
       // succeeded, so a rejected delivery never spends it. The bundle reaches only the
       // dedicated Codex volume; the Gateway receives the transport endpoint and token instead.
       const oauth = oauthRequested ? await this.deliverOAuthLogin(prepared, context) : undefined;
-      const sandbox = this.sandboxHarnessDriver(prepared);
-      const provider =
-        sandbox === undefined
-          ? undefined
-          : await this.provisionSandboxHarness(prepared, launch.environment, sandbox, context);
-      if (provider?.ready === false) {
-        return { ...result, ready: false };
-      }
+      // A staged provider key travels the same way to the same one container: the harness
+      // environment, which the gateway never receives.
+      const providerKey = providerKeyRequested
+        ? await this.deliverProviderKey(prepared, context)
+        : undefined;
       const agent =
-        prepared.harness.mode === "dedicated" && sandbox === undefined
+        prepared.harness.mode === "dedicated"
           ? await this.reconcileAgent(
               prepared,
               { ...launch.environment, ...proxyEnvironment },
               oauth === undefined ? "api_key" : "oauth",
               oauth,
+              providerKey,
               planes,
             )
           : undefined;
       const gateway = await this.reconcileGateway(
         prepared,
         {
-          ...(agent !== undefined
-            ? agent.environment
-            : provider !== undefined
-              ? provider.environment
-              : launch.environment),
+          ...(agent !== undefined ? agent.environment : launch.environment),
           ...proxyEnvironment,
         },
         { ...(planes === undefined ? {} : { planes }), publish: egress === undefined },
@@ -536,30 +513,58 @@ export class ContainerdComputeDriver implements ComputeDriver {
   describePrepareRevisionFailure(
     error: unknown,
   ): ComputePrepareRevisionFailureDiagnostic | undefined {
-    if (error instanceof HelperFailure) {
-      return { code: error.code, stage: "compute-containerd", message: error.message };
+    // Preparation wraps the primary failure in an AggregateError when its cleanup also fails,
+    // so the cause that decides retry behavior must be read through that wrapper.
+    const failure = primaryPreparationFailure(error);
+    if (failure instanceof HelperFailure) {
+      return {
+        code: failure.code,
+        // The platform accepts a lower-case stage without hyphens; a Driver name is not a stage.
+        stage: "prepare_revision",
+        errorClass: "HelperFailure",
+        message: failure.message,
+        // Deliberately no permanence: `retryable` is the helper's immediate-retry hint, absent on
+        // most failures, and a readiness deadline on a first start clears itself on the next pass.
+      };
     }
-    if (error instanceof OwnershipFailure || error instanceof ConfigurationFailure) {
-      return { code: "CONFIGURATION", stage: "compute-containerd", message: error.message };
+    if (failure instanceof ConfigurationFailure) {
+      return {
+        code: "CONTAINERD_CONFIGURATION_INVALID",
+        stage: "prepare_revision",
+        errorClass: "ConfigurationFailure",
+        message: failure.message,
+        permanent: true,
+      };
+    }
+    if (failure instanceof OwnershipFailure) {
+      return {
+        code: "CONTAINERD_OWNERSHIP_CONFLICT",
+        stage: "prepare_revision",
+        errorClass: "OwnershipFailure",
+        message: failure.message,
+        permanent: true,
+      };
+    }
+    if (failure instanceof AdmissionFailure) {
+      return {
+        code: "CONTAINERD_ADMISSION_REFUSED",
+        stage: "prepare_revision",
+        errorClass: "AdmissionFailure",
+        message: failure.message,
+        permanent: true,
+      };
     }
     return undefined;
   }
 
-  async activateRevision(revision: AgentRevision, context?: ComputeRevisionContext): Promise<void> {
+  async activateRevision(
+    revision: AgentRevision,
+    _context?: ComputeRevisionContext,
+  ): Promise<void> {
     // An embedded revision runs its harness inside the gateway container, so the gateway is its
-    // workload; a dedicated revision runs a separate harness container, or a provider-owned
-    // Sandbox when a Sandbox Driver owns it. Requiring the workload the revision actually has is
-    // what keeps an embedded Agent from looking like a failed one.
+    // workload; a dedicated revision runs a separate harness container. Requiring the workload
+    // the revision actually has is what keeps an embedded Agent from looking like a failed one.
     const ownership = revisionOwnership(revision);
-    if (this.sandboxHarnessDriver(revision) !== undefined) {
-      // The Harness is a Sandbox, not a container: activation observes it serving instead, as
-      // the gateway container below is observed running.
-      if (!(await this.sandboxHarnessServing(revision, context?.harnessAuth.method ?? "runtime"))) {
-        throw new HelperFailure("UNAVAILABLE", "the Sandbox Harness is not serving.", true);
-      }
-      await this.lifecycle.beforeWorkloadStart(revision);
-      return;
-    }
     const embedded = revision.harness.mode === "embedded";
     const name = embedded
       ? gatewayContainerName(ownership.namespaceId, ownership.agentId ?? "")
@@ -626,9 +631,6 @@ export class ContainerdComputeDriver implements ComputeDriver {
         timeoutMs: 10_000,
       });
     }
-    // The revision's Sandbox goes with it: a stopped predecessor must not keep a Harness the
-    // successor's Sandbox would compete with.
-    await this.cleanupSandboxHarness(revision);
   }
 
   async retireRevision(revision: AgentRevision): Promise<void> {
@@ -669,8 +671,6 @@ export class ContainerdComputeDriver implements ComputeDriver {
         expectLabels: ownershipLabels(revisionOwnership(revision), role),
       });
     }
-    // The Sandbox is provider-owned, so retiral deletes it through the paired SandboxDriver.
-    await this.cleanupSandboxHarness(revision);
   }
 
   async getRuntimeImages(revision: AgentRevision): Promise<readonly RuntimeImage[]> {
@@ -714,7 +714,7 @@ export class ContainerdComputeDriver implements ComputeDriver {
         continue;
       }
       const uid = state.containerId === "" ? name : state.containerId;
-      const ready = state.running === true && state.health === "ready";
+      const ready = await this.runtimeReady(role, state);
       pods.push({
         role,
         cluster: "control",
@@ -727,14 +727,20 @@ export class ContainerdComputeDriver implements ComputeDriver {
           {
             name: role,
             state: state.running === true ? "running" : "terminated",
-            reason: null,
+            // The engine's own rendering of the container ("Exited (3)"), reported as it is
+            // rather than translated into a vocabulary containerd does not produce.
+            reason: state.running === true ? null : (state.health ?? null),
             ready,
             restartCount: 0,
             startedAt: null,
             lastTermination:
               state.running === true
                 ? null
-                : { reason: null, exitCode: state.exitCode ?? 0, finishedAt: null },
+                : {
+                    reason: state.health ?? null,
+                    exitCode: state.exitCode ?? 0,
+                    finishedAt: null,
+                  },
           },
         ],
         events: [],
@@ -1070,6 +1076,7 @@ export class ContainerdComputeDriver implements ComputeDriver {
     workloadEnvironment: Readonly<Record<string, string>>,
     loginMode: CodexLoginMode,
     oauth: OAuthReceipt | undefined,
+    providerKey: string | undefined,
     planes?: readonly string[],
   ): Promise<{
     readonly environment: Readonly<Record<string, string>>;
@@ -1104,7 +1111,7 @@ export class ContainerdComputeDriver implements ComputeDriver {
       // The harness program is ~135 KB, above Linux's 128 KiB limit for one exec argument, so
       // passing it as a single `-e` value fails with E2BIG before Node ever starts. It travels
       // compressed in bounded pieces after the repository's fixed loader, under tini, exactly as
-      // the Kubernetes Harness and the Sandbox path run it.
+      // the Kubernetes Harness runs it.
       entrypoint: [RUNTIME_WRAPPER_COMMAND[0]!],
       args: [
         ...RUNTIME_WRAPPER_COMMAND.slice(1),
@@ -1117,6 +1124,11 @@ export class ContainerdComputeDriver implements ComputeDriver {
         APP_SERVER_TOKEN: token,
         CODEX_HOME: CODEX_HOME_DIRECTORY,
         CODEX_LOGIN_MODE: loginMode,
+        // The provider key this harness logs in with. The Kubernetes Compute Driver projects
+        // the same Secret as this exact environment variable into the same one container; the
+        // shared runtime reads it, logs in, and deletes it from the process environment before
+        // it serves. The gateway receives the transport endpoint and token instead.
+        ...(providerKey === undefined ? {} : { OPENAI_API_KEY: providerKey }),
         // The shared runtime logs in from the seeded bundle and refuses a receipt that names
         // another staged login or another Codex home.
         ...(oauth === undefined
@@ -1135,8 +1147,11 @@ export class ContainerdComputeDriver implements ComputeDriver {
       configurationHash,
       limits: this.options.resources.agent,
       readiness: {
-        // The image's entrypoint prepends `node`, so the probe program is handed to Node.
-        command: ["node", "-e", AGENT_READINESS_ENTRYPOINT],
+        // The image's entrypoint prepends `node`, so the probe program is handed to Node. The
+        // helper runs the probe with a fixed minimal environment, so it checks the Codex
+        // app-server's own local readiness instead of the shared entrypoint, which needs the
+        // container's variables and its module path.
+        command: [...HARNESS_READINESS_COMMAND],
         intervalMs: 2_000,
         timeoutMs: 5_000,
         deadlineMs: 120_000,
@@ -1144,6 +1159,39 @@ export class ContainerdComputeDriver implements ComputeDriver {
     });
     await this.invoke("run-container", { ...spec }, spec.readiness?.deadlineMs);
     return { environment: this.transportEnvironment(name, token) };
+  }
+
+  /**
+   * Reads the operator's staged provider key for a dedicated Codex harness.
+   *
+   * The platform resolves the Agent's Harness Secret and hands this Driver only the reference it
+   * resolved, so the key is read from the selected Secret Driver's store under the same ownership
+   * proof as the OAuth login: the document must still carry the uid the platform resolved and
+   * belong to this revision's Namespace. The value is handed straight to the harness container
+   * environment and nowhere else — never argv, a log line, a file, or the Gateway container — and
+   * the shared runtime deletes it from its process environment before it serves.
+   */
+  private async deliverProviderKey(
+    revision: Readonly<AgentRevision>,
+    context: ComputeRevisionContext | undefined,
+  ): Promise<string> {
+    const directory = this.secretStoreDirectory;
+    const auth = context?.harnessAuth;
+    if (directory === undefined || auth?.method !== "api_key") {
+      throw new ConfigurationFailure(
+        "Provider key delivery requires the selected Secret Driver's store.",
+      );
+    }
+    const namespaceId = requiredText(revision.namespaceId, "AgentRevision Namespace ID");
+    const stored = await readStoredSecretValue(directory, {
+      secretId: requiredText(auth.source.id, "provider key Secret ID"),
+      namespaceId,
+      backendRef: {
+        key: requiredText(auth.backendRef.key, "provider key Secret key"),
+        uid: requiredText(auth.backendRef.uid, "provider key Secret UID"),
+      },
+    });
+    return requiredText(stored.value, "provider key value");
   }
 
   /**
@@ -1272,10 +1320,7 @@ export class ContainerdComputeDriver implements ComputeDriver {
 
   /** The model the harness is asked to serve, as the configuration states it. */
   private harnessModel(revision: Readonly<AgentRevision>): string | undefined {
-    const agents = asRecord(revision.configuration.agents);
-    const defaults = asRecord(agents?.defaults);
-    const model = defaults?.model;
-    return typeof model === "string" ? model : (asRecord(model)?.primary as string | undefined);
+    return harnessPrimaryModel(revision.configuration);
   }
 
   /**
@@ -1287,335 +1332,6 @@ export class ContainerdComputeDriver implements ComputeDriver {
       APP_SERVER_URL: `ws://${name}:${String(AGENT_TRANSPORT_PORT)}`,
       APP_SERVER_TOKEN: token,
     };
-  }
-
-  /**
-   * The SandboxDriver paired for this revision, when it exists. A revision the platform
-   * admitted without a SandboxDriver name is not paired, and one pinned to a SandboxDriver
-   * this Driver does not hold is refused rather than silently served by this engine.
-   */
-  private sandboxDriverForRevision(revision: Readonly<AgentRevision>): SandboxDriver | undefined {
-    if (revision.sandboxDriverId === undefined) {
-      return undefined;
-    }
-    const driver = this.sandboxDriver;
-    if (driver === undefined) {
-      throw new ConfigurationFailure("AgentRevision requires an unavailable SandboxDriver.");
-    }
-    if (revision.sandboxDriverId !== driver.id) {
-      throw new ConfigurationFailure("AgentRevision is pinned to another SandboxDriver.");
-    }
-    return driver;
-  }
-
-  /**
-   * The SandboxDriver that owns this revision's dedicated Harness. An embedded Harness runs
-   * inside the gateway container and is not a provider workload, so only a dedicated revision
-   * can be provisioned outside this engine.
-   */
-  private sandboxHarnessDriver(revision: Readonly<AgentRevision>): SandboxDriver | undefined {
-    return revision.harness.mode === "dedicated" &&
-      this.sandboxDriverForRevision(revision)?.provisionHarness !== undefined
-      ? this.sandboxDriver
-      : undefined;
-  }
-
-  /** The Namespace as the paired Sandbox and Credential Gateway see it. */
-  private sandboxPlacement(namespace: Pick<Namespace, "id" | "createdAt">): Namespace {
-    return {
-      id: namespace.id,
-      // The OpenShell Workspace name must stay a DNS-1123 label within 19 characters, and the
-      // Sandbox and Credential Gateway Drivers derive it from this one placement name.
-      name: `oce-${sha256Hex(namespace.id, 15)}`,
-      status: "ready",
-      createdAt: namespace.createdAt,
-    };
-  }
-
-  private sandboxNamespace(revision: Pick<AgentRevision, "namespaceId" | "createdAt">): Namespace {
-    return this.sandboxPlacement({ id: revision.namespaceId, createdAt: revision.createdAt });
-  }
-
-  private sandboxNamespaceContext(namespace: Readonly<Namespace>): SandboxNamespaceContext {
-    return {
-      namespace,
-      // This engine has no Kubernetes object client; a managed Workspace needs none.
-      kubernetes: undefined,
-      signal: currentComputeAbortSignal() ?? new AbortController().signal,
-    };
-  }
-
-  private verifySandboxResourceRef(
-    sandbox: SandboxResourceRef,
-    revision: Readonly<AgentRevision>,
-    namespaceName: string,
-  ): void {
-    if (
-      sandbox.namespaceName !== namespaceName ||
-      sandbox.agentId !== revision.agentId ||
-      sandbox.revisionId !== revision.id ||
-      typeof sandbox.resourceName !== "string" ||
-      sandbox.resourceName.trim().length === 0
-    ) {
-      throw new OwnershipFailure("SandboxDriver returned an ambiguous Sandbox identity.");
-    }
-  }
-
-  private requireCredentialGateway(): CredentialGatewayDriver {
-    if (this.credentialGatewayDriver === undefined) {
-      throw new ConfigurationFailure(
-        "The admitted revision requires the Credential Gateway Driver.",
-      );
-    }
-    return this.credentialGatewayDriver;
-  }
-
-  /**
-   * The Harness requirements a paired SandboxDriver provisions: the same bounded Node wrapper
-   * and revision environment this Driver gives its own harness container, minus the egress proxy
-   * variables, because the provider fences the Sandbox's egress itself.
-   */
-  private sandboxHarnessRequirements(
-    revision: Readonly<AgentRevision>,
-    workloadEnvironment: Readonly<Record<string, string>>,
-    transportToken: string,
-    loginMode: HarnessWorkloadRequirements["loginMode"],
-    credentialAttachments: readonly CredentialSourceAttachment[],
-  ): HarnessWorkloadRequirements {
-    const ownership = revisionOwnership(revision);
-    const volumes = workspaceVolumes(ownership);
-    const environment: Record<string, string> = {
-      HOME: "/home/node",
-      PATH: "/app/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      APP_SERVER_PORT: String(AGENT_TRANSPORT_PORT),
-      APP_SERVER_TOKEN: transportToken,
-      CODEX_HOME: CODEX_HOME_DIRECTORY,
-      CODEX_LOGIN_MODE: "api_key",
-      LOG_FORMAT: "json",
-      ...(this.harnessModel(revision) === undefined
-        ? {}
-        : { OPENCLAW_HARNESS_MODEL: this.harnessModel(revision) as string }),
-      ...workloadEnvironment,
-    };
-    return {
-      loginMode,
-      image: this.options.images.agent,
-      command: [...RUNTIME_WRAPPER_COMMAND, ...nodeProgramArguments(AGENT_RUNTIME_ENTRYPOINT)],
-      // The Sandbox reattaches the same volumes this Driver prepared: its own state at the Codex
-      // home, and the Agent workspace the `sandboxDataMount` of the Installation selects.
-      workspaceMounts: [
-        {
-          claimName: volumes.state,
-          subPath: "state",
-          mountPath: CODEX_HOME_DIRECTORY,
-          readOnly: false,
-        },
-        {
-          claimName: volumes.workspace,
-          subPath: "workspace",
-          mountPath: WORKSPACE_DIRECTORY,
-          readOnly: false,
-        },
-      ],
-      environment: Object.freeze(
-        Object.entries(environment).map(([name, value]) => Object.freeze({ name, value })),
-      ),
-      files: Object.freeze([]),
-      credentialAttachments: Object.freeze([...credentialAttachments]),
-      labels: Object.freeze({
-        ...ownershipLabels(ownership, "agent"),
-        "openclaw.dev/workload-role": "agent",
-      }),
-    };
-  }
-
-  /**
-   * Provisions the revision's dedicated Harness as a provider-owned Sandbox and returns the
-   * transport environment the Agent Gateway needs to reach it. This Driver starts no harness
-   * container for such a revision.
-   */
-  private async provisionSandboxHarness(
-    revision: Readonly<AgentRevision>,
-    workloadEnvironment: Readonly<Record<string, string>>,
-    sandboxDriver: SandboxDriver,
-    context: ComputeRevisionContext | undefined,
-  ): Promise<
-    | { readonly ready: true; readonly environment: Readonly<Record<string, string>> }
-    | { readonly ready: false }
-  > {
-    const namespace = this.sandboxNamespace(revision);
-    const namespaceContext = this.sandboxNamespaceContext(namespace);
-    // One token for two roles: the Sandbox Harness receives it through the provisioning request,
-    // and the Gateway presents the same value, so a replacement keeps its authenticated channel.
-    const token = await provisionTransportToken(this.options.credentials.directory, {
-      namespaceId: revision.namespaceId,
-      agentId: revision.agentId,
-    });
-    const sources = context?.credentialSources ?? [];
-    const attachments =
-      sources.length === 0
-        ? []
-        : await this.requireCredentialGateway().attachForRevision({
-            namespace,
-            revision,
-            sources,
-            signal: namespaceContext.signal,
-          });
-    const requirements = this.sandboxHarnessRequirements(
-      revision,
-      workloadEnvironment,
-      token,
-      context?.harnessAuth.method ?? "runtime",
-      attachments,
-    );
-    const harnessContext = { ...namespaceContext, revision, requirements };
-    const sandbox = await sandboxDriver.provisionHarness!(harnessContext);
-    this.verifySandboxResourceRef(sandbox, revision, namespace.name);
-    if (sandboxDriver.harnessEndpoint === undefined) {
-      throw new ConfigurationFailure(
-        "A paired SandboxDriver must expose the Harness endpoint it provisioned.",
-      );
-    }
-    const endpoint = await sandboxDriver.harnessEndpoint(harnessContext);
-    if (sandboxDriver.harnessStatus !== undefined) {
-      const status = await sandboxDriver.harnessStatus({
-        ...harnessContext,
-        transportToken: token,
-      });
-      if (status.state === "failed") {
-        throw new DependencyUnavailableError("The Sandbox Harness reported a failed startup.");
-      }
-      if (status.state !== "serving") {
-        // The Sandbox exists; the next reconcile observes it again rather than failing the
-        // revision, exactly as a Harness container that is not ready yet.
-        return { ready: false };
-      }
-    }
-    if (attachments.length > 0) {
-      const statuses = await this.requireCredentialGateway().attachmentStatus({
-        namespace,
-        revision,
-        sources,
-        signal: namespaceContext.signal,
-        sandbox,
-      });
-      if (
-        statuses.some((status) =>
-          ["failed", "withheld", "revoked", "absent"].includes(status.state),
-        )
-      ) {
-        throw new DependencyUnavailableError(
-          "The Sandbox did not apply a required credential attachment.",
-        );
-      }
-      if (
-        statuses.length !== attachments.length ||
-        statuses.some((status) => status.state !== "ready")
-      ) {
-        return { ready: false };
-      }
-    }
-    return {
-      ready: true,
-      environment: Object.freeze({
-        APP_SERVER_URL: endpoint.url,
-        APP_SERVER_TOKEN: token,
-      }),
-    };
-  }
-
-  /**
-   * Re-observes the provider-owned Harness of a revision that was prepared through the Sandbox.
-   * Activation must see it serving; a Harness that never started is not an active revision.
-   */
-  private async sandboxHarnessServing(
-    revision: Readonly<AgentRevision>,
-    loginMode: HarnessWorkloadRequirements["loginMode"],
-  ): Promise<boolean> {
-    const sandboxDriver = this.sandboxHarnessDriver(revision);
-    if (sandboxDriver?.harnessEndpoint === undefined || sandboxDriver.harnessStatus === undefined) {
-      return true;
-    }
-    const token = await readTransportToken(this.options.credentials.directory, {
-      namespaceId: revision.namespaceId,
-      agentId: revision.agentId,
-    });
-    if (token === undefined) {
-      throw new ConfigurationFailure("The Sandbox Harness transport token is unavailable.");
-    }
-    const requirements = this.sandboxHarnessRequirements(revision, {}, token, loginMode, []);
-    const harnessContext = {
-      ...this.sandboxNamespaceContext(this.sandboxNamespace(revision)),
-      revision,
-      requirements,
-    };
-    await sandboxDriver.harnessEndpoint(harnessContext);
-    const status = await sandboxDriver.harnessStatus({ ...harnessContext, transportToken: token });
-    if (status.state === "failed") {
-      throw new DependencyUnavailableError("The Sandbox Harness reported a failed startup.");
-    }
-    return status.state === "serving";
-  }
-
-  /** Removes the revision's provider-owned Sandbox, when this revision has one. */
-  private async cleanupSandboxHarness(revision: Readonly<AgentRevision>): Promise<void> {
-    const sandboxDriver = this.sandboxHarnessDriver(revision);
-    if (sandboxDriver === undefined) {
-      return;
-    }
-    await sandboxDriver.cleanup({
-      ...this.sandboxNamespaceContext(this.sandboxNamespace(revision)),
-      revision,
-    });
-  }
-
-  /**
-   * Revokes one credential source from the revision's paired Sandbox through the selected
-   * Credential Gateway, exactly as the Kubernetes Compute Driver does for its own placement.
-   */
-  async withdrawCredentialSource(
-    revision: Readonly<AgentRevision>,
-    source: Readonly<CredentialSource>,
-    signal: AbortSignal,
-    options: { readonly recheck?: boolean } = {},
-  ): Promise<CredentialAttachmentStatus> {
-    if (
-      revision.compute.id !== this.id ||
-      revision.compute.implementation !== this.implementation
-    ) {
-      throw new Error(
-        "Refusing to withdraw from an AgentRevision pinned to another Compute Driver.",
-      );
-    }
-    const sandboxDriver = this.sandboxDriverForRevision(revision);
-    if (sandboxDriver?.harnessResource === undefined) {
-      throw new ConfigurationFailure(
-        "Credential withdrawal requires a SandboxDriver that identifies the revision's Harness.",
-      );
-    }
-    const namespace = this.sandboxNamespace(revision);
-    const sandbox = sandboxDriver.harnessResource({ namespace, revision });
-    this.verifySandboxResourceRef(sandbox, revision, namespace.name);
-    const status = await this.requireCredentialGateway().withdraw({
-      namespace,
-      revision,
-      sandbox,
-      sourceId: source.id,
-      signal,
-      ...(options.recheck === true ? { recheck: true } : {}),
-    });
-    if (status.sourceId !== source.id) {
-      throw new OwnershipFailure("The Credential Gateway withdrew another credential source.");
-    }
-    return status;
-  }
-
-  /**
-   * The Namespace as the paired Sandbox and Credential Gateway see it. This engine has no
-   * cluster namespace, so the placement is derived from the OCC Namespace ID alone.
-   */
-  async resolveSandboxNamespace(namespace: Readonly<Namespace>): Promise<Readonly<Namespace>> {
-    return Object.freeze({ ...namespace, name: this.sandboxPlacement(namespace).name });
   }
 
   private async reconcileGateway(
@@ -1865,6 +1581,40 @@ export class ContainerdComputeDriver implements ComputeDriver {
   }
 
   /** The container that runs one runtime role for an exact revision. */
+  /**
+   * Ready means what this engine can prove. containerd keeps no readiness state for a
+   * container: the helper reports the engine's own status rendering ("Up", "Exited (3)"), and
+   * the Driver must never compare that against a value the engine does not produce. A gateway
+   * is ready when its container runs and its published endpoint answers; a dedicated harness
+   * publishes nothing, passed its own readiness probe at delivery, and is therefore ready while
+   * it runs.
+   */
+  private async runtimeReady(
+    role: (typeof RUNTIME_ROLES)[number],
+    state: { readonly running?: boolean; readonly ports?: Readonly<Record<string, string>> },
+  ): Promise<boolean> {
+    if (state.running !== true) {
+      return false;
+    }
+    if (role !== "gateway") {
+      return true;
+    }
+    const port = publishedPortFrom(state.ports);
+    if (port === undefined) {
+      return false;
+    }
+    try {
+      const response = await fetch(`http://127.0.0.1:${String(port)}/healthz`, {
+        signal: AbortSignal.timeout(GATEWAY_LIVENESS_TIMEOUT_MS),
+      });
+      await response.body?.cancel().catch(() => undefined);
+      return response.ok;
+    } catch {
+      // A gateway that does not answer is not ready; the caller needs no error detail.
+      return false;
+    }
+  }
+
   private runtimeContainerName(scope: RevisionScope, role: (typeof RUNTIME_ROLES)[number]): string {
     if (role === "gateway") {
       return gatewayContainerName(scope.namespaceId, scope.agentId);
@@ -1970,6 +1720,26 @@ function gatewayKey(revision: Readonly<AgentRevision>): string {
  * The helper reports a published port the way nerdctl renders it, for example
  * "127.0.0.1:18099->8080/tcp".
  */
+/**
+ * The failure that decides retry behavior: preparation aggregates a cleanup failure around the
+ * primary one, and a wrapper must not downgrade a permanent refusal into a retry.
+ */
+function primaryPreparationFailure(error: unknown): unknown {
+  let current = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (current instanceof AggregateError && current.errors.length > 0) {
+      current = current.errors[0];
+      continue;
+    }
+    if (current instanceof Error && current.cause !== undefined && current.cause !== current) {
+      current = current.cause;
+      continue;
+    }
+    break;
+  }
+  return current;
+}
+
 function publishedPortFrom(
   ports: Readonly<Record<string, string>> | undefined,
 ): number | undefined {
@@ -2051,6 +1821,17 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+/**
+ * The primary model the harness is asked to serve, as the configuration selects it. Admission
+ * reads it to decide which provider credential a dedicated Codex harness can be handed.
+ */
+function harnessPrimaryModel(configuration: OpenClawConfigurationDocument): string | undefined {
+  const agents = asRecord(configuration.agents);
+  const defaults = asRecord(agents?.defaults);
+  const model = defaults?.model;
+  return typeof model === "string" ? model : (asRecord(model)?.primary as string | undefined);
 }
 
 function requiredText(value: unknown, description: string): string {

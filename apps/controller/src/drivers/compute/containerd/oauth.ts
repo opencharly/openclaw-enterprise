@@ -1,32 +1,30 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { asRecord, isNonEmptyString, sha256Hex } from "@openclaw-enterprise/utils";
 
 import { ConfigurationFailure, OwnershipFailure } from "./errors.ts";
+import {
+  readStoredSecretValue,
+  storedSecretPath,
+  type StoredSecretDocument,
+} from "./secret-store.ts";
 
 /**
  * The Codex OAuth handoff for this engine.
  *
  * The platform stages a Codex device login as a Secret in the selected Secret Driver and hands
  * a Compute Driver only its reference (`ComputeRevisionContext.harnessAuth`), never the value.
- * The Kubernetes Compute Driver reads that Secret with its own cluster client; an engine with
- * no cluster reads the filesystem Secret Driver's store that composition injects into this
- * Driver. That is the same trust boundary the Kubernetes Compute Driver already has over its
- * cluster's Secret API — a Compute Driver may read the credential backend it delivers from —
- * and it is the only way this engine can consume the login the platform actually staged.
+ * This module reads that staged document through `secret-store.ts`, the one place that names the
+ * store layout, exactly as the Kubernetes Compute Driver reads the same login through its
+ * cluster's Secret API.
  *
  * Confinement: the bundle reaches the dedicated Codex volume and nothing else. It is never
  * placed in argv, an environment variable, a log line, or a message; the seed travels to the
  * volume through a read-only mount of a Driver-owned file, and the platform's copy is replaced
  * by a consumed marker.
- *
- * The filesystem Secret Driver stores one owner-only JSON document per Secret at
- * `<root>/<sha256Hex(namespaceId, 12)>/<sha256Hex(secretId, 32)>.json`, exposed as
- * `{uid, namespaceId, name, value}`. The path is derived here rather than imported, so this
- * module names the layout it depends on: changing that layout changes both Drivers.
  */
 
 /** Environment variables the shared runtime validates the seeded receipt against. */
@@ -51,17 +49,6 @@ export type CodexLoginMode = "api_key" | "oauth";
 export interface OAuthReceipt {
   readonly sourceUid: string;
   readonly volumeUid: string;
-}
-
-/** The single data key the filesystem Secret Driver exposes, as `backendRef.key` names it. */
-const STORED_SECRET_KEY = "value";
-
-/** One staged device login, as the platform wrote it into Secret storage. */
-interface StoredLogin {
-  readonly uid: string;
-  readonly namespaceId: string;
-  readonly name: string;
-  readonly value: string;
 }
 
 /** A staged login with the session envelope it carries and the Secret it came from. */
@@ -111,10 +98,6 @@ export function codexHomeVolumeUid(namespaceId: string, agentId: string): string
   return sha256Hex(`nerdctl-codex-home:${namespaceId}/${agentId}`, 32);
 }
 
-function storedLoginPath(directory: string, namespaceId: string, secretId: string): string {
-  return join(directory, sha256Hex(namespaceId, 12), `${sha256Hex(secretId, 32)}.json`);
-}
-
 function record(value: unknown, description: string): Record<string, unknown> {
   const parsed = asRecord(value);
   if (parsed === undefined) {
@@ -123,56 +106,26 @@ function record(value: unknown, description: string): Record<string, unknown> {
   return parsed;
 }
 
-function text(value: unknown, description: string): string {
-  if (!isNonEmptyString(value)) {
-    throw new ConfigurationFailure(`${description} is missing.`);
-  }
-  return value;
-}
-
-/** Reads and authenticates one staged login from the Secret Driver's store. */
+/**
+ * Reads and authenticates one staged login from the Secret Driver's store. The store layout and
+ * the ownership proof live in `secret-store.ts`, which this Driver's provider-key delivery reads
+ * the same store through.
+ */
 export async function readOAuthLogin(
   directory: string,
   reference: OAuthLoginReference,
 ): Promise<StagedOAuthLogin> {
-  if (reference.backendRef.key !== STORED_SECRET_KEY) {
-    throw new ConfigurationFailure("The staged OAuth login uses an unsupported Secret key.");
-  }
-  let content: string;
-  try {
-    content = await readFile(
-      storedLoginPath(directory, reference.namespaceId, reference.secretId),
-      "utf8",
-    );
-  } catch {
-    // A missing login is the operator's to fix, and a raw filesystem error would name a path
-    // that leads to a credential.
-    throw new ConfigurationFailure("The staged OAuth login is not present in Secret storage.");
-  }
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(content);
-  } catch {
-    throw new ConfigurationFailure("The staged OAuth login storage is malformed.");
-  }
-  const stored = record(decoded, "Stored OAuth login");
-  const login: StoredLogin = {
-    uid: text(stored.uid, "Stored OAuth login UID"),
-    namespaceId: text(stored.namespaceId, "Stored OAuth login Namespace"),
-    name: text(stored.name, "Stored OAuth login name"),
-    value: text(stored.value, "Stored OAuth login value"),
+  const stored = await readStoredSecretValue(directory, {
+    secretId: reference.secretId,
+    namespaceId: reference.namespaceId,
+    backendRef: reference.backendRef,
+  });
+  const login = {
+    uid: stored.uid,
+    namespaceId: stored.namespaceId,
+    name: stored.name,
+    value: stored.value,
   };
-  // The reference the platform resolved must still describe this exact document. Only the uid
-  // can prove that: a Secret Driver whose backend has no cluster coordinates publishes an
-  // opaque reference (the filesystem Driver hashes the Namespace and Secret names), so its
-  // `name` is a locator, not the Secret's name. The path is derived from the Namespace and
-  // Secret ids, and the uid is the one this Driver issued and stored in the document.
-  if (login.uid !== reference.backendRef.uid) {
-    throw new OwnershipFailure("The staged OAuth login changed ownership.");
-  }
-  if (login.namespaceId !== reference.namespaceId) {
-    throw new OwnershipFailure("The staged OAuth login belongs to another Namespace.");
-  }
   const envelope = session(login.value);
   if (envelope.namespaceId !== login.namespaceId) {
     // The session inside the document must belong to the Namespace that owns the document.
@@ -348,10 +301,10 @@ async function writeStoredLogin(
   login: StagedOAuthLogin,
   value: string,
 ): Promise<void> {
-  const path = storedLoginPath(directory, login.namespaceId, login.secretId);
+  const path = storedSecretPath(directory, login.namespaceId, login.secretId);
   // The document keeps the backend identity the Secret Driver verifies on every later read; a
   // change to it would make the platform refuse the Secret as foreign.
-  const stored: StoredLogin = {
+  const stored: StoredSecretDocument = {
     uid: login.uid,
     namespaceId: login.namespaceId,
     name: login.name,

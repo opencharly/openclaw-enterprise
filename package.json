@@ -14,7 +14,6 @@
     "cli:build": "go build -trimpath -o bin/occ ./cmd/occ",
     "cli:check": "test -z \"$(gofmt -l cmd internal)\" && go vet ./...",
     "cli:test": "go test ./...",
-    "parity:compute": "node scripts/parity-containerd-kubernetes.mjs",
     "helper:containerd:build": "go build -C helpers/compute-containerd -trimpath -o ../../bin/compute-containerd .",
     "helper:containerd:check": "test -z \"$(gofmt -l helpers)\" && go vet -C helpers/compute-containerd ./...",
     "helper:containerd:test": "go test -C helpers/compute-containerd ./...",

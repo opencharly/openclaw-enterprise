@@ -214,6 +214,9 @@ export function createWorkerRevisionFixtures(testFile) {
         backendId = null,
         grantHarnessSecret = true,
         auth = "secret",
+        // The staged value of the Harness Secret an api_key Agent authenticates with. A real
+        // provider-key lane passes the operator's credential; a synthetic stage keeps the default.
+        secretValue = "worker-fixture-key",
         nonModelSources = 0,
         oauthSession,
         oauthSecretId,
@@ -301,7 +304,7 @@ export function createWorkerRevisionFixtures(testFile) {
           namespaceId: namespace.id,
           name: `key-${randomUUID()}`,
         };
-        const backendRef = await secretDriver.create(identity, "worker-fixture-key");
+        const backendRef = await secretDriver.create(identity, secretValue);
         await state.transact((unit) =>
           unit.secrets.createSecret({
             ...identity,

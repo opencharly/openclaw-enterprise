@@ -285,12 +285,6 @@ Driver detaches the provider again only if `SandboxSpec.providers` lists it.
   `tests/integration/postgres-worker-agent-revision.test.mjs` run the real queue
   and worker against PostgreSQL with a Compute double: retries, outages, replays,
   refusals, maintenance, denials, other revisions, lost grants, and late creates.
-- The real OpenShell test updates the source and withdraws a `bearer-token`
-  source (its placeholder stops reaching an echo service), then the model
-  source (the next model turn fails).
-- `OCC_TEST_OPENSHELL_K3D_REAL=1 node --env-file="$TEST_ENV_FILE" --test tests/integration/sandbox-driver-openshell-k3d-real.test.mjs`
-  registers an `openai` source through the production API against a real
-  gateway and reads its live `ready` status. See [OpenShell tests](../testing/openshell.md).
 - A source stuck in `deleting` returns `503` on delete until the gateway is
   reachable; `GET` shows its live `status`.
 - Worker reason codes `CREDENTIAL_GATEWAY_MISMATCH` and

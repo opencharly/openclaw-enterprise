@@ -43,6 +43,11 @@ export const WORKSPACE_SETUP_FILE = "workspace-setup.json";
  * home is handed over the same way, and unless this delivery is the one that seeds an OAuth
  * bundle, any earlier personal login is removed: a revision that stopped using OAuth must not
  * leave a credential refreshing on the Agent's disk.
+ *
+ * The removal runs before the handoff and takes the Codex home back from the workload user
+ * first. A container root without `DAC_OVERRIDE` cannot write a directory another user owns, so
+ * a retry over a Codex home an earlier delivery already handed over would otherwise fail the
+ * whole preparation instead of clearing one file.
  */
 export function workspaceSetupScript(
   options: { readonly codexHome?: string; readonly clearOauth?: boolean } = {},
@@ -54,19 +59,20 @@ export function workspaceSetupScript(
   const clear =
     options.clearOauth === true && options.codexHome !== undefined
       ? `
+setupFs.chownSync(${JSON.stringify(options.codexHome)}, 0, 0);
 for (const name of ["auth.json", ".oce-oauth.json"]) {
   setupFs.rmSync(${JSON.stringify(options.codexHome)} + "/" + name, { force: true });
 }`
       : "";
   return `
-const setupFs = require("node:fs");
+const setupFs = require("node:fs");${clear}
 // An Agent's storage belongs to the workload user, and only root inside the container can
 // hand it over. This runs for every delivery: a revision without a workspace projection
 // still needs writable state, and its runtime fails without it.
 for (const path of ${JSON.stringify(directories)}) {
   setupFs.chownSync(path, 1000, 1000);
   setupFs.chmodSync(path, 0o700);
-}${clear}
+}
 const payloadPath = process.env.OPENCLAW_WORKSPACE_SETUP_PATH;
 let payloadFd;
 try {

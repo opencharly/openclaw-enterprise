@@ -40,7 +40,4 @@ __pycache__/
 
 # Keep the testing guide visible when a global ignore matches its name.
 !/docs/testing.md
-/bin/openshell-driver-nerdctl
-/bin/openshell-driver-containerd
 /bin/compute-nerdctl
-/bin/compute-containerd

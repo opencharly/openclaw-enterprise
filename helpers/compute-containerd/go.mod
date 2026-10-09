@@ -7,8 +7,6 @@ require (
 	github.com/containerd/go-cni v1.1.14
 	github.com/containerd/nerdctl/v2 v2.4.1
 	github.com/opencontainers/runtime-spec v1.3.0
-	google.golang.org/grpc v1.83.2
-	google.golang.org/protobuf v1.36.12
 )
 
 require (
@@ -124,6 +122,8 @@ require (
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260825221802-da73d73af1c5 // indirect
+	google.golang.org/grpc v1.83.2 // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 	sigs.k8s.io/knftables v0.0.18 // indirect
 	tags.cncf.io/container-device-interface v1.1.1 // indirect

@@ -4,6 +4,7 @@
 // the wire protocol; every line of Driver code between the worker and that path runs for real.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,7 +16,11 @@ import { ContainerdComputeDriver } from "../../apps/controller/src/drivers/compu
 import { gatewayPasswordPath } from "../../apps/controller/src/drivers/compute/containerd/credentials.ts";
 import { SystemNerdctlHelperExecutor } from "../../apps/controller/src/drivers/compute/containerd/executor.ts";
 import { validateConfiguration } from "../../apps/controller/src/drivers/compute/containerd/schema.ts";
-import { workspaceVolumes } from "../../apps/controller/src/drivers/compute/containerd/spec.ts";
+import {
+  agentContainerName,
+  gatewayContainerName,
+  workspaceVolumes,
+} from "../../apps/controller/src/drivers/compute/containerd/spec.ts";
 import { FilesystemSecretDriver } from "../../apps/controller/src/drivers/secret/filesystem/index.ts";
 import { requiresPostgres } from "../helpers/postgres-backend-state.mjs";
 import { createWorkerRevisionFixtures } from "../helpers/postgres-worker-revision-fixture.mjs";
@@ -335,7 +340,7 @@ async function settledWork(fixture, candidate, timeoutMs = 60_000) {
     async () => {
       const row = (
         await fixture.observerPool.query(
-          "SELECT state, reason_code FROM occ.controller_work WHERE idempotency_key = $1",
+          "SELECT state, reason_code, attempt_count FROM occ.controller_work WHERE idempotency_key = $1",
           [candidate.idempotencyKey],
         )
       ).rows[0];
@@ -397,14 +402,16 @@ async function oauthFixture(context, label) {
   const secrets = join(root, "secrets");
   const secretDriver = new FilesystemSecretDriver({ directory: secrets });
   const helper = await stubHelper(root);
-  const driver = new ContainerdComputeDriver(
-    validateConfiguration(containerdConfiguration(helper.path, join(root, "credentials"))),
-    {
-      executor: new SystemNerdctlHelperExecutor(),
-      // Composition injects the selected Secret Driver's store; the operator never repeats it.
-      secretStore: { directory: secrets },
-    },
-  );
+  const configuration = containerdConfiguration(helper.path, join(root, "credentials"));
+  // These cases admit more than one Agent into one Namespace, and a delivery is refused when the
+  // Namespace budget has no room for it. Raise the quota so a refusal can only come from the
+  // credential under test, never from capacity.
+  configuration.resources.namespace.quota = { "limits.cpu": "32", "limits.memory": "32Gi" };
+  const driver = new ContainerdComputeDriver(validateConfiguration(configuration), {
+    executor: new SystemNerdctlHelperExecutor(),
+    // Composition injects the selected Secret Driver's store; the operator never repeats it.
+    secretStore: { directory: secrets },
+  });
   const fixture = await setup(context, { computeDriver: driver, secretDriver });
   const { owner, candidate } = await fixture.admitInitialRevision(label, {
     agent: {
@@ -564,11 +571,15 @@ test(
       },
     });
     const secondResult = await settledWork(fixture, second.candidate);
-    // The refusal must be terminal. NOTE (reported): it currently settles as a retried
-    // DEPENDENCY_UNAVAILABLE rather than the permanent CONFIGURATION the Driver's own diagnostic
-    // names, so the platform reports the wrong cause and spends its whole attempt budget on a
-    // delivery that cannot succeed. The invariant this case protects is the refusal itself.
+    // A semantic refusal is permanent: the Driver marks it so, the worker stops on attempt 1, and
+    // the platform reports the Driver's own cause instead of a retryable dependency failure.
     assert.equal(secondResult.state, "failed_permanent", JSON.stringify(secondResult));
+    assert.equal(secondResult.reason_code, "CONTAINERD_CONFIGURATION_INVALID");
+    assert.equal(
+      secondResult.attempt_count,
+      1,
+      "a permanent refusal must not spend the retry budget",
+    );
     assert.equal(
       (await fixture.activePointer(second.owner)).rows[0]?.active_revision_id,
       null,
@@ -588,6 +599,12 @@ test(
     await secretDriver.delete(thirdSecret);
     const thirdResult = await settledWork(fixture, third.candidate);
     assert.equal(thirdResult.state, "failed_permanent", JSON.stringify(thirdResult));
+    assert.equal(thirdResult.reason_code, "CONTAINERD_CONFIGURATION_INVALID");
+    assert.equal(
+      thirdResult.attempt_count,
+      1,
+      "a permanent refusal must not spend the retry budget",
+    );
     assert.equal(
       (await fixture.activePointer(third.owner)).rows[0]?.active_revision_id,
       null,
@@ -753,6 +770,209 @@ test(
       "{{.Names}}",
     ]);
     assert.equal(remaining.trim(), "", "retiring an Agent must leave no container of its own");
+    const removed = await driver.deleteNamespace({
+      id: fixture.namespace.id,
+      name: fixture.namespace.name,
+    });
+    assert.equal(removed.namespaceDeleted, true, JSON.stringify(removed));
+  },
+);
+
+// --- The provider key: the model credential a dedicated Codex harness executes turns with ------
+// The credential is the operator's own, so this case is opt-in twice over: the real-engine
+// selector plus the provider credential and model the other real-runtime lanes already require.
+// Everything else — the platform's Secret staging, the worker's admission and delivery, the
+// engine, and the Codex harness's own login and model probe — runs for real.
+
+const REAL_MODEL = process.env.OCC_TEST_OPENAI_MODEL;
+const REAL_PROVIDER_KEY = process.env.OPENAI_API_KEY;
+
+const requiresRealProviderTurn =
+  REAL_ENGINE && REAL_MODEL !== undefined && REAL_PROVIDER_KEY !== undefined
+    ? requiresPostgres
+    : {
+        skip: "set OCC_TEST_NERDCTL_REAL=1, OPENAI_API_KEY and OCC_TEST_OPENAI_MODEL with the prepared PostgreSQL lane to prove a real provider-key model turn",
+      };
+
+/** Compares credentials without ever putting one into an assertion message. */
+function credentialDigest(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function containerEnvironment(container) {
+  return container.Config.Env;
+}
+
+test(
+  "the worker hands a staged provider key to a dedicated Codex harness that completes a real model turn",
+  requiresRealProviderTurn,
+  async (context) => {
+    await access(REAL_HELPER).catch(() => {
+      throw new Error(`build the helper first (pnpm helper:containerd:build): ${REAL_HELPER}`);
+    });
+    const root = await mkdtemp(join(tmpdir(), "containerd-real-provider-key-"));
+    context.after(() => rm(root, { recursive: true, force: true }));
+    // Composition injects the selected Secret Driver's store; the platform stages the key there
+    // and the revision carries only the reference it resolved.
+    const secrets = join(root, "secrets");
+    const secretDriver = new FilesystemSecretDriver({ directory: secrets });
+    const configuration = containerdConfiguration(REAL_HELPER, join(root, "credentials"));
+    configuration.images = {
+      gateway: REAL_IMAGE,
+      agent: REAL_IMAGE,
+      requireImmutableDigest: false,
+    };
+    configuration.containerd.namespace = REAL_NAMESPACE;
+    const driver = new ContainerdComputeDriver(validateConfiguration(configuration), {
+      executor: new SystemNerdctlHelperExecutor(),
+      secretStore: { directory: secrets },
+    });
+    const fixture = await setup(context, { computeDriver: driver, secretDriver });
+    const { owner, candidate } = await fixture.admitInitialRevision("real provider key", {
+      agent: {
+        executionMode: "dedicated",
+        auth: "secret",
+        secretValue: REAL_PROVIDER_KEY,
+      },
+      revision: {
+        configuration: {
+          // The shared Codex runtime logs in with this provider's key and probes the exact model
+          // the configuration selects.
+          agents: {
+            defaults: { model: `openai/${REAL_MODEL}`, workspace: "/home/node/workspace" },
+          },
+          gateway: { mode: "local", bind: "lan" },
+        },
+      },
+    });
+
+    await fixture.start(driver);
+    const result = await waitFor(
+      "the worker to activate the provider-key revision",
+      async () => {
+        const row = (await fixture.workResult(candidate)).rows[0];
+        return row?.reason_code === "REVISION_ACTIVATED" ? row : undefined;
+      },
+      300_000,
+    );
+    assert.equal(
+      result.reason_code,
+      "REVISION_ACTIVATED",
+      JSON.stringify(result.result_data ?? null),
+    );
+    assert.equal(
+      (await fixture.activePointer(owner)).rows[0]?.active_revision_id,
+      candidate.id,
+      "an Agent authenticating with a provider key must reach an active revision",
+    );
+
+    // The key landed in exactly one container. Both comparisons use digests so a failure can
+    // never print the credential, and the test never writes it anywhere.
+    const ownership = {
+      namespaceId: fixture.namespace.id,
+      agentId: owner.id,
+      revisionId: candidate.id,
+    };
+    const [harness] = JSON.parse(
+      (await run("nerdctl", ["-n", REAL_NAMESPACE, "inspect", agentContainerName(ownership)]))
+        .stdout,
+    );
+    const harnessEnvironment = containerEnvironment(harness);
+    const harnessKey = harnessEnvironment
+      .find((entry) => entry.startsWith("OPENAI_API_KEY="))
+      ?.slice("OPENAI_API_KEY=".length);
+    assert.ok(harnessKey !== undefined, "the harness must be handed the provider key");
+    assert.equal(
+      credentialDigest(harnessKey),
+      credentialDigest(REAL_PROVIDER_KEY),
+      "the harness must hold exactly the key the platform staged",
+    );
+    assert.ok(harnessEnvironment.includes("CODEX_LOGIN_MODE=api_key"));
+    assert.ok(harnessEnvironment.includes("CODEX_HOME=/home/node/.codex"));
+    assert.ok(
+      !harness.Args.join("\n").includes(REAL_PROVIDER_KEY),
+      "the key must never travel as a container argument",
+    );
+
+    const [gateway] = JSON.parse(
+      (
+        await run("nerdctl", [
+          "-n",
+          REAL_NAMESPACE,
+          "inspect",
+          gatewayContainerName(fixture.namespace.id, owner.id),
+        ])
+      ).stdout,
+    );
+    assert.ok(
+      !containerEnvironment(gateway).some((entry) => entry.startsWith("OPENAI_API_KEY=")),
+      "the key must never reach the gateway that serves clients",
+    );
+
+    // The harness's own startup evidence. `codex.model_probe` reports READY only after one real
+    // turn completed: the runtime runs `codex exec` with an authorized model, requires exactly one
+    // `turn.started`/`turn.completed` pair and a non-empty `agent_message`, and withholds its
+    // readiness until then. The revision could not have activated without that turn.
+    const binding = {
+      namespace: fixture.namespace,
+      agent: await fixture.currentAgent(owner),
+      revision: candidate,
+    };
+    const described = await driver.describeAgentRuntime(candidate, new AbortController().signal);
+    const logs = await driver.readAgentRuntimeLogs(binding, {
+      source: "agent",
+      pod: described.pods[0].name,
+      podUid: described.pods[0].uid,
+      container: "agent",
+      previous: false,
+      tailLines: 1000,
+      limitBytes: 1_048_576,
+      signal: new AbortController().signal,
+    });
+    const events = logs.lines
+      .map((line) => {
+        try {
+          return JSON.parse(line.raw);
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((event) => event !== undefined);
+    const login = events.find(
+      (event) => event.event === "runtime.startup_phase" && event.phase === "codex-login",
+    );
+    assert.equal(
+      login?.outcome,
+      "ok",
+      `codex-login must succeed from the delivered key: ${JSON.stringify(login)}`,
+    );
+    const modelProbe = events.find((event) => event.event === "codex.model_probe");
+    assert.equal(
+      modelProbe?.code,
+      "READY",
+      `the model probe must complete a real turn: ${JSON.stringify(modelProbe)}`,
+    );
+    const probePhase = events.find(
+      (event) => event.event === "runtime.startup_phase" && event.phase === "model-probe",
+    );
+    assert.equal(probePhase?.outcome, "ok");
+    const agentTurn = events.find(
+      (event) => event.event === "runtime.startup_phase" && event.phase === "native-spawn",
+    );
+    assert.equal(agentTurn?.outcome, "ok", "the authenticated app-server must start its turn loop");
+    // The evidence records the phases, the probe's outcome and timings; it carries no credential.
+    console.log(
+      "provider-key delivery:",
+      JSON.stringify({ login, modelProbe, probePhase, agentTurn }),
+    );
+
+    // Deleting the Agent retires the harness, and the Namespace teardown releases the volumes.
+    await fixture.requestDeletion(owner);
+    await waitFor(
+      `Agent ${owner.id} deletion`,
+      async () => ((await fixture.currentAgent(owner)) === undefined ? true : undefined),
+      180_000,
+    );
     const removed = await driver.deleteNamespace({
       id: fixture.namespace.id,
       name: fixture.namespace.name,

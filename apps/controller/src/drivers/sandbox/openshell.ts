@@ -588,19 +588,10 @@ interface CodexRuntimeCredentialMaterial {
 
 async function codexRuntimeCredentials(
   context: SandboxHarnessContext,
-  workspaceMode: OpenShellWorkspaceMode,
 ): Promise<CodexRuntimeCredentialMaterial> {
   const projected = context.requirements.environment.filter((entry) => "valueFrom" in entry);
   if (projected.length === 0) {
     return { credentials: {}, credentialExpirationTimes: {}, config: {} };
-  }
-  if (workspaceMode === "managed") {
-    // A managed Workspace has no Kubernetes namespace, so it has no workspace-node setup
-    // Secret to read; the projection is refused rather than read from another placement.
-    throw new SandboxRevisionUnsupportedError(
-      "SANDBOX_SECRET_ENVIRONMENT_UNSUPPORTED",
-      "OpenShell managed workspace mode cannot read a Kubernetes workspace-node setup Secret.",
-    );
   }
   if (projected.length !== 1 || projected[0]!.name !== WORKSPACE_NODE_SETUP_ENVIRONMENT) {
     const unsupported = projected.find((entry) => entry.name !== WORKSPACE_NODE_SETUP_ENVIRONMENT);
@@ -781,20 +772,8 @@ function namespaceName(namespace: Readonly<Namespace>): string {
   return nonempty(namespace.name, "Kubernetes namespace name");
 }
 
-type OpenShellWorkspaceMode = OpenShellSandboxDriverOptions["gateway"]["workspaceMode"];
-
-/**
- * Operator mode names the Workspace after the pre-provisioned Kubernetes namespace, so the
- * Gateway's own namespace selector admits it; that mode requires the Kubernetes object client
- * for the operator resources and readiness the Configuration declares. Managed mode names the
- * Workspace from the OCC Namespace ID alone, so a Gateway that owns its Workspaces needs no
- * Kubernetes namespace, object client, or pre-provisioned resources. The `oce-<15 hex>` form
- * stays inside OpenShell v0.1.3-pre.2's 19-character Workspace limit.
- */
-function workspaceName(mode: OpenShellWorkspaceMode, namespace: Readonly<Namespace>): string {
-  return mode === "operator"
-    ? openShellWorkspaceName(namespace)
-    : `oce-${sha256Hex(nonempty(namespace.id, "OCC Namespace ID"), 15)}`;
+function workspaceName(namespace: Readonly<Namespace>): string {
+  return openShellWorkspaceName(namespace);
 }
 
 function workspaceLabels(namespace: Readonly<Namespace>): Readonly<Record<string, string>> {
@@ -807,9 +786,8 @@ function workspaceLabels(namespace: Readonly<Namespace>): Readonly<Record<string
 function verifyWorkspaceOwnership(
   workspace: OpenShellWorkspaceResponse,
   namespace: Readonly<Namespace>,
-  mode: OpenShellWorkspaceMode,
 ): void {
-  const expectedName = workspaceName(mode, namespace);
+  const expectedName = workspaceName(namespace);
   const expectedLabels = workspaceLabels(namespace);
   if (
     workspace.name !== expectedName ||
@@ -824,9 +802,8 @@ function verifyWorkspaceOwnership(
 function verifyActiveWorkspace(
   workspace: OpenShellWorkspaceResponse,
   namespace: Readonly<Namespace>,
-  mode: OpenShellWorkspaceMode,
 ): void {
-  verifyWorkspaceOwnership(workspace, namespace, mode);
+  verifyWorkspaceOwnership(workspace, namespace);
   if (workspace.phase !== "WORKSPACE_PHASE_ACTIVE" && workspace.phase !== 1) {
     throw new OpenShellSandboxConfigurationFailure(
       `OpenShell Workspace ${workspace.name} is not active.`,
@@ -1477,19 +1454,6 @@ function validateOptions(options: OpenShellSandboxDriverOptions): void {
   options.gateway.operatorWorkspaceResources?.forEach((resource, index) =>
     validateOperatorWorkspaceResource(resource, `gateway.operatorWorkspaceResources[${index}]`),
   );
-  // Managed mode names and owns the Workspace through the Gateway alone, so an option that
-  // only ever reaches a Kubernetes object is refused instead of silently ignored.
-  if (
-    options.gateway.workspaceMode === "managed" &&
-    (options.gateway.operatorNamespaceLabels !== undefined ||
-      options.gateway.readiness !== undefined ||
-      options.gateway.networkPolicyResources !== undefined ||
-      options.gateway.operatorWorkspaceResources !== undefined)
-  ) {
-    throw new OpenShellSandboxConfigurationFailure(
-      "OpenShell managed workspace mode does not apply operator Kubernetes resources, labels, or readiness; use operator mode for a Kubernetes-hosted Gateway.",
-    );
-  }
   nonempty(options.kubernetes.runtimeClassName, "OpenShell RuntimeClass name");
   if (options.kubernetes.serviceAccount.mode !== "gatewayConfigured") {
     throw new OpenShellSandboxConfigurationFailure(
@@ -1913,6 +1877,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
   }
 
   async ensureNamespace(context: SandboxNamespaceContext): Promise<void> {
+    this.requireOperatorWorkspaceMode("ensure a Namespace");
     const namespace = namespaceName(context.namespace);
     await applyOperatorNamespaceLabels(context, this.options.gateway.operatorNamespaceLabels);
     await applyResources(context, this.options.gateway.operatorWorkspaceResources);
@@ -1922,7 +1887,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     }
     const client = this.gatewayClientForNamespace(namespace);
     await client.health(context.signal);
-    const name = workspaceName(this.options.gateway.workspaceMode, context.namespace);
+    const name = workspaceName(context.namespace);
     let workspace = await client.getWorkspace(name, context.signal);
     if (workspace === undefined) {
       try {
@@ -1943,10 +1908,11 @@ export class OpenShellSandboxDriver implements SandboxDriver {
         }
       }
     }
-    verifyActiveWorkspace(workspace, context.namespace, this.options.gateway.workspaceMode);
+    verifyActiveWorkspace(workspace, context.namespace);
   }
 
   async provisionHarness(context: SandboxHarnessContext): Promise<SandboxResourceRef> {
+    this.requireOperatorWorkspaceMode("provision a Harness");
     if (
       context.revision.harness.mode !== "dedicated" ||
       (context.revision.harness.id !== "codex" && context.revision.harness.id !== "openclaw")
@@ -1974,7 +1940,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     const sandbox = this.sandboxRef(context);
     const codex = context.revision.harness.id === "codex";
     const client = this.gatewayClientForNamespace(sandbox.namespaceName);
-    const workspace = workspaceName(this.options.gateway.workspaceMode, context.namespace);
+    const workspace = workspaceName(context.namespace);
     let runtimeProvider: string | undefined;
     let runtimeCredentialMaterial: CodexRuntimeCredentialMaterial = {
       credentials: {},
@@ -1984,10 +1950,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     if (codex) {
       codexTransportVerifier(context.requirements);
       const runtimeFiles = codexRuntimeFiles(context.requirements);
-      runtimeCredentialMaterial = await codexRuntimeCredentials(
-        context,
-        this.options.gateway.workspaceMode,
-      );
+      runtimeCredentialMaterial = await codexRuntimeCredentials(context);
       await this.ensureRuntimeProfile(client, workspace, runtimeFiles.profile, context.signal);
       const ensured = await this.ensureRuntimeProvider(
         client,
@@ -2125,7 +2088,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
   }
 
   async harnessEndpoint(context: SandboxHarnessContext): Promise<SandboxHarnessEndpoint> {
-    const { service } = await this.exactHarnessService(context);
+    const { service } = await this.exactHarnessService(context, "resolve a Harness endpoint");
     return Object.freeze({
       url: harnessWebSocketUrl(service.advertisedUrl),
       workspaceRoot: "/sandbox/enterprise",
@@ -2140,7 +2103,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
    * nothing listens, is still starting.
    */
   async harnessStatus(context: SandboxHarnessStatusContext): Promise<SandboxHarnessStatus> {
-    const { client, service } = await this.exactHarnessService(context);
+    const { client, service } = await this.exactHarnessService(context, "observe a Harness");
     // Handshake first, so a serving app-server never receives a plain request. A
     // Harness wrapper holding a startup failure refuses the upgrade and serves the
     // failure instead.
@@ -2161,10 +2124,14 @@ export class OpenShellSandboxDriver implements SandboxDriver {
       : Object.freeze({ state: "starting" });
   }
 
-  private async exactHarnessService(context: SandboxHarnessContext): Promise<{
+  private async exactHarnessService(
+    context: SandboxHarnessContext,
+    operation: string,
+  ): Promise<{
     readonly client: OpenShellGatewayClient;
     readonly service: NonNullable<Awaited<ReturnType<OpenShellGatewayClient["getService"]>>>;
   }> {
+    this.requireOperatorWorkspaceMode(operation);
     if (context.revision.harness.mode !== "dedicated" || context.revision.harness.id !== "codex") {
       throw new SandboxRevisionUnsupportedError(
         "SANDBOX_HARNESS_UNSUPPORTED",
@@ -2179,7 +2146,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     const sandbox = this.sandboxRef(context);
     const client = this.gatewayClientForNamespace(sandbox.namespaceName);
     const service = await client.getService(
-      workspaceName(this.options.gateway.workspaceMode, context.namespace),
+      workspaceName(context.namespace),
       sandbox.resourceName,
       "",
       context.signal,
@@ -2200,6 +2167,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     context: SandboxNamespaceContext & { readonly revision?: Readonly<AgentRevision> },
   ): Promise<void> {
     if (context.revision !== undefined) {
+      this.requireOperatorWorkspaceMode("clean up a revision");
       if (
         context.revision.namespaceId !== context.namespace.id ||
         context.revision.sandboxDriverId !== this.id
@@ -2210,7 +2178,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
       }
       const sandbox = this.sandboxRef({ namespace: context.namespace, revision: context.revision });
       const client = this.gatewayClientForNamespace(sandbox.namespaceName);
-      const workspace = workspaceName(this.options.gateway.workspaceMode, context.namespace);
+      const workspace = workspaceName(context.namespace);
       await client.deleteSandbox(
         {
           name: sandbox.resourceName,
@@ -2235,16 +2203,14 @@ export class OpenShellSandboxDriver implements SandboxDriver {
       }
       return;
     }
+    this.requireOperatorWorkspaceMode("clean up a Namespace");
     const namespace = namespaceName(context.namespace);
     const client = this.gatewayClientForNamespace(namespace);
-    const workspace = await client.getWorkspace(
-      workspaceName(this.options.gateway.workspaceMode, context.namespace),
-      context.signal,
-    );
+    const workspace = await client.getWorkspace(workspaceName(context.namespace), context.signal);
     if (workspace !== undefined) {
       // A prior delete can have reached TERMINATING before its response was lost.
       // Ownership remains the cleanup boundary, and DeleteWorkspace is idempotent.
-      verifyWorkspaceOwnership(workspace, context.namespace, this.options.gateway.workspaceMode);
+      verifyWorkspaceOwnership(workspace, context.namespace);
       for (const provider of await client.listProviders(workspace.name, context.signal)) {
         if (
           provider.type === RUNTIME_PROFILE_ID &&
@@ -2281,6 +2247,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     context: SandboxLogContext,
     request: SandboxLogRequest,
   ): Promise<SandboxLogChunk> {
+    this.requireOperatorWorkspaceMode("read Sandbox logs");
     if (
       context.revision.namespaceId !== context.namespace.id ||
       context.revision.sandboxDriverId !== this.id
@@ -2295,7 +2262,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     try {
       response = await reader.getSandboxLogs(
         {
-          workspace: workspaceName(this.options.gateway.workspaceMode, context.namespace),
+          workspace: workspaceName(context.namespace),
           sandbox: sandbox.resourceName,
           lines: request.lines,
           ...(request.sinceTime === undefined ? {} : { sinceTime: request.sinceTime }),
@@ -2447,6 +2414,14 @@ export class OpenShellSandboxDriver implements SandboxDriver {
       );
     }
     await client.deleteProviderProfile(workspace, RUNTIME_PROFILE_ID, signal);
+  }
+
+  private requireOperatorWorkspaceMode(operation: string): void {
+    if (this.options.gateway.workspaceMode === "managed") {
+      throw new OpenShellSandboxConfigurationFailure(
+        `OpenShell managed workspace mode is not implemented; cannot ${operation}.`,
+      );
+    }
   }
 
   harnessResource(

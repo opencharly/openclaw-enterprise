@@ -107,13 +107,10 @@ also export `OCC_TEST_OPENSHELL_HARNESS=openclaw`.
 
 For manual setup, prepare these inputs using the
 [OpenShell test settings](#openshell-test-environment) and
-[OpenShell requirements](../reference/drivers/openshell-sandbox.md#kubernetes-and-admission-requirements),
-then run the exact file:
-
-```sh
-OCC_TEST_OPENSHELL_K3D_REAL=1 \
-  node --env-file="$TEST_ENV_FILE" --test tests/integration/sandbox-driver-openshell-k3d-real.test.mjs
-```
+[OpenShell requirements](../reference/drivers/openshell-sandbox.md#kubernetes-and-admission-requirements).
+The bundled Sandbox suite this section described is not part of this checkout: it
+was removed with the parked OpenShell compute helper line, while the OpenShell
+SandboxDriver itself remains. The scenarios below record that suite's contract.
 
 Both modes compose the `openshell` Backend with the Sandbox and Credential
 Gateway Drivers. They register an `openai` credential source through the
@@ -255,7 +252,7 @@ the token's admitted lifetime ends or the test cleans it up. See the
 [qualification contract](../reference/drivers/openshell-sandbox.md#qualification-contract)
 and the [pre.5 experiment handoff](openshell-pre5-local-experiment.md).
 
-Local `sandbox-driver-startup`, `controller-lifecycle`, and
+Local `controller-lifecycle` and
 `postgres-platform-state` integration tests cover driver selection and Backend
 membership, revision lifecycle, and persistence. The
 `credential-source-occ`, `openshell-gateway-wire`, and `kubernetes-compute`
@@ -300,11 +297,13 @@ plugin-free dedicated Codex workflow.
 
 ## OpenShell test environment
 
-[`sandbox-driver-openshell-k3d-real.test.mjs`](../../tests/integration/sandbox-driver-openshell-k3d-real.test.mjs)
-is selected by `OCC_TEST_OPENSHELL_K3D_REAL=1` or by setting any Kubernetes,
-image, database, or OpenShell-specific prerequisite. If any of those variables
-is present while the flag is not `1`, prerequisite validation still fails; use a
-scoped environment file for this suite.
+These variables select the OpenShell suites this checkout still carries
+(`dev-up-openshell-k3d-real.test.mjs` and the `local-first-agent-openshell`
+cases); the removed Sandbox suite used the same environment. Set
+`OCC_TEST_OPENSHELL_K3D_REAL=1` or any Kubernetes, image, database, or
+OpenShell-specific prerequisite to select them. If any of those variables is
+present while the flag is not `1`, prerequisite validation still fails; use a
+scoped environment file for these suites.
 
 | Variable                                  | Requirement or default                                                                                                                              |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |

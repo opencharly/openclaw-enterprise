@@ -150,16 +150,14 @@ test("the containerd Driver delivers a revision on the real rootless engine", as
   assert.equal(described.pods.length, 1);
   assert.equal(described.pods[0].phase, "Running");
   assert.equal(described.pods[0].containers[0].state, "running");
-  // PRODUCT DEFECT (reported, not encoded here): the helper answers `inspect-container` with
-  // nerdctl's status string ("Up") while `describeAgentRuntime` requires exactly "ready" to set
-  // `ready`. A running, serving gateway can therefore never be reported ready through the Agent
-  // deployment runtime API. The case reports that instead of pinning the buggy value.
-  if (described.pods[0].ready !== true) {
-    t.diagnostic(
-      "PRODUCT DEFECT: describeAgentRuntime reports a running, serving gateway as not ready " +
-        `(engine health ${JSON.stringify("Up")} is not "ready").`,
-    );
-  }
+  // Readiness is what this engine can prove: the container runs and the published endpoint
+  // answers. The engine's own status rendering ("Up") is never compared against a value
+  // containerd does not produce.
+  assert.equal(
+    described.pods[0].ready,
+    true,
+    "a running gateway whose published endpoint answers must be reported ready",
+  );
 
   // The reader takes the platform's own binding, the same object the API hands a Compute Driver,
   // not a bare revision.
@@ -512,4 +510,12 @@ test("a staged Codex login is seeded into the harness's home and never into the 
   });
   const removed = await driver.deleteNamespace(namespace);
   assert.equal(removed.namespaceDeleted, true, JSON.stringify(removed));
+  // Teardown selects by label, so a volume that lost its labels would survive it and make the
+  // next delivery of this Agent fail with an ownership refusal. Check the Agent's own volume
+  // names, not the label selector, to prove the Codex home was actually reclaimed.
+  const survivingVolumes = (await run("nerdctl", ["-n", NAMESPACE, "volume", "ls", "-q"])).stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((name) => Object.values(volumes).includes(name));
+  assert.deepEqual(survivingVolumes, [], "no Agent-owned volume may survive its Namespace");
 });

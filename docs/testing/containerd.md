@@ -50,10 +50,11 @@ is verified through the Agent workflow rather than here.
 
 ## Capability parity
 
-`pnpm parity:compute` compares the containerd and Kubernetes columns of the
-[capability matrix](../reference/drivers/compute-matrix.md), separating the
-deviations the matrix records as intentional from the gaps that remain. `--check`
-exits non-zero while an undeclared gap exists.
+The containerd and Kubernetes columns of the
+[capability matrix](../reference/drivers/compute-matrix.md) are compared by hand against the
+source revisions they cite. The `parity:compute` script that automated the comparison was removed
+with the parked OpenShell parity wiring; the matrix data still records each remaining deviation
+under `deviations`.
 
 ## Platform workflow and OAuth delivery
 
@@ -78,11 +79,33 @@ With `OCC_TEST_NERDCTL_REAL=1` the same file also deploys, serves, logs and reti
 on the rootless engine through the worker. Leave the variable unset to run the platform cases
 without an engine; those cases then skip.
 
+### Real provider-key model turn
+
+The same file's provider-key case is opt-in on the real-engine selector **and** the credentialed
+model-lane variables, and it is named:
+
+```bash
+OCC_TEST_NERDCTL_REAL=1 OPENAI_API_KEY=... OCC_TEST_OPENAI_MODEL=... \
+  node --test tests/integration/containerd-compute-workflow.test.mjs
+```
+
+`OCC_TEST_NERDCTL_REAL=1` with `OPENAI_API_KEY` (the operator's authorized key) and
+`OCC_TEST_OPENAI_MODEL` (an authorized OpenAI model) select
+_the worker hands a staged provider key to a dedicated Codex harness that completes a real model
+turn_. The case stages the key as the Agent's Harness Secret through the platform, runs the real
+worker and engine, and asserts the harness container holds exactly that key while the gateway does
+not, then reads the harness's own startup evidence: `codex-login` ok, `codex.model_probe` with code
+`READY`, and the authenticated app-server started. The probe is one real model turn — the runtime
+requires exactly one `turn.started`/`turn.completed` pair with a non-empty agent message — and the
+revision cannot activate without it. Comparisons use digests, so a failing assertion never prints
+the credential. Without all three variables the case skips with its selector named.
+
 ### Coverage limits
 
 - A dedicated Codex harness refuses a **synthetic** OAuth login at its own model-authentication
-  probe, so the real-engine case seeds and inspects the harness's Codex home but does not reach
-  harness readiness. Credentialed readiness needs an authorized login and is not covered here.
+  probe, so the real-engine OAuth case seeds and inspects the harness's Codex home but does not
+  reach harness readiness. Credentialed OAuth readiness needs an authorized login and is not
+  covered by that case; the provider-key case above reaches readiness with a real key.
 - `describeAgentRuntime` cannot report a running container as ready on this engine. The helper
   answers `inspect-container` with nerdctl's status string (`Up`), while the Driver requires
   exactly `ready`, and only the `run-container` response ever carries that value. The Agent

@@ -138,5 +138,4 @@ for follow-up, and the credential file used for the run was left untouched.
 - [OpenShell test setup and supported proof](openshell.md)
 - [OpenShell SandboxDriver contract and upstream preconditions](../reference/drivers/openshell-sandbox.md)
 - [OpenShell provisioning flow](../flows/openshell-sandbox-provisioning.md)
-- [Real OpenShell integration](../../tests/integration/sandbox-driver-openshell-k3d-real.test.mjs)
 - [OpenShell Kubernetes fixture](../../tests/helpers/openshell-kubernetes-real.mjs)

@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
+import { createServer } from "node:http";
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -504,25 +505,74 @@ test("deleteNamespace reports a failure instead of claiming deletion", async () 
   assert.equal(result.failure, "permanent");
 });
 
-test("harness auth admits runtime and a dedicated Codex OAuth login, and nothing else", () => {
+test("harness auth admits runtime, a dedicated Codex login or provider key, and nothing else", () => {
   const driver = driverWith(new RecordingExecutor());
   const embedded = { id: "openclaw", mode: "embedded" };
   driver.validateHarnessAuth(embedded, { method: "runtime" }, {}, undefined, undefined);
 
-  for (const method of ["api_key", "codex_pat"]) {
-    assert.throws(
-      () =>
-        driver.validateHarnessAuth(
-          embedded,
-          { method, source: {}, secretDriverId: "occ/kubernetes-secret" },
-          {},
-          undefined,
-          undefined,
-        ),
-      /runtime credentials/,
-      `${method} must be refused while P9 is unbuilt`,
-    );
-  }
+  // A provider key needs a dedicated Codex harness, the Secret Driver's store to read it from,
+  // and a model the OpenAI key can authenticate. `codex_pat` stays refused: a Backend-issued
+  // account token still has no delivery path to exactly one container on this engine.
+  const openai = { agents: { defaults: { model: "openai/gpt-5.6-luna" } } };
+  const keyed = driverWith(
+    new RecordingExecutor(),
+    {},
+    { secretStore: { directory: "/var/lib/oce/secrets" } },
+  );
+  keyed.validateHarnessAuth(
+    { id: "codex", mode: "dedicated" },
+    { method: "api_key", source: {}, secretDriverId: "occ/filesystem-secret" },
+    openai,
+  );
+  assert.throws(
+    () =>
+      driver.validateHarnessAuth(
+        embedded,
+        { method: "api_key", source: {}, secretDriverId: "occ/filesystem-secret" },
+        openai,
+      ),
+    /dedicated Codex harness/,
+    "an embedded OpenClaw gateway has no harness container to receive a model key",
+  );
+  assert.throws(
+    () =>
+      driver.validateHarnessAuth(
+        { id: "codex", mode: "dedicated" },
+        { method: "api_key", source: {}, secretDriverId: "occ/filesystem-secret" },
+        openai,
+      ),
+    /requires the selected Secret Driver's store/,
+    "the key lives in Secret storage this Driver must be able to read",
+  );
+  assert.throws(
+    () =>
+      keyed.validateHarnessAuth(
+        { id: "codex", mode: "dedicated" },
+        { method: "api_key", source: {}, secretDriverId: "occ/filesystem-secret" },
+        { agents: { defaults: { model: "anthropic/claude-sonnet-5" } } },
+      ),
+    /openai/,
+    "another provider's model would be handed the wrong credential",
+  );
+  assert.throws(
+    () =>
+      keyed.validateHarnessAuth(
+        { id: "codex", mode: "dedicated" },
+        { method: "codex_pat", source: {}, secretDriverId: "occ/filesystem-secret" },
+        openai,
+      ),
+    /runtime credentials/,
+    "codex_pat must stay refused while its account-token delivery is unbuilt",
+  );
+  assert.throws(
+    () =>
+      keyed.validateHarnessAuth(
+        { id: "codex", mode: "embedded" },
+        { method: "api_key", source: {}, secretDriverId: "occ/filesystem-secret" },
+        openai,
+      ),
+    /always dedicated/,
+  );
   // OAuth is a dedicated Codex path only, and it needs the Secret Driver's store to read the
   // staged login from. Both refusals happen before the platform admits the revision.
   assert.throws(
@@ -1262,8 +1312,13 @@ function revisionBinding() {
   };
 }
 
-/** Only the gateway container exists for an embedded runtime. */
-function gatewayOnly(overrides = {}) {
+/**
+ * Only the gateway container exists for an embedded runtime. The engine reports its own status
+ * rendering and the published binding, never a readiness word: containerd keeps no health state.
+ */
+function gatewayOnly(overrides = {}, options = {}) {
+  const ports =
+    options.port === undefined ? {} : { published: `127.0.0.1:${options.port}->8080/tcp` };
   return {
     "inspect-container": (call) =>
       call.request.input.name.includes("gateway")
@@ -1272,7 +1327,8 @@ function gatewayOnly(overrides = {}) {
             output: {
               exists: true,
               running: true,
-              health: "ready",
+              health: "Up",
+              ports,
               containerId: "container-1",
               image: `registry.example/gateway@${DIGEST}`,
               imageId: DIGEST,
@@ -1289,8 +1345,26 @@ function gatewayOnly(overrides = {}) {
   };
 }
 
-test("describeAgentRuntime reports one control-host container and invents no events", async () => {
-  const executor = new RecordingExecutor(gatewayOnly());
+/** The gateway's liveness route, served by a real loopback endpoint. */
+async function gatewayLiveness(t, status = 200) {
+  const requests = [];
+  const server = createServer((request, response) => {
+    requests.push(request.url);
+    response.writeHead(status);
+    response.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(() => resolve())));
+  const address = server.address();
+  return { port: address.port, requests };
+}
+
+test("describeAgentRuntime reports one control-host container and invents no events", async (t) => {
+  // The container runs and its published endpoint answers, which is everything this engine can
+  // prove about readiness. A Driver that compared the engine's status against a readiness word
+  // would report every healthy deployment as not ready.
+  const { port, requests } = await gatewayLiveness(t);
+  const executor = new RecordingExecutor(gatewayOnly({}, { port }));
   const described = await driverWith(executor).describeAgentRuntime(
     revisionBinding(),
     new AbortController().signal,
@@ -1304,6 +1378,7 @@ test("describeAgentRuntime reports one control-host container and invents no eve
   assert.equal(pod.cluster, "control");
   assert.equal(pod.phase, "Running");
   assert.equal(pod.ready, true);
+  assert.deepEqual(requests, ["/healthz"]);
   // No Kubernetes event stream exists here; an empty list is honest, an invented one is not.
   assert.deepEqual(pod.events, []);
   assert.equal(pod.containers[0].state, "running");
@@ -1312,6 +1387,48 @@ test("describeAgentRuntime reports one control-host container and invents no eve
     ["gateway"],
   );
   assert.equal(described.sources[0].available, true);
+});
+
+test("a running gateway whose endpoint is unhealthy is not reported ready", async (t) => {
+  const { port } = await gatewayLiveness(t, 503);
+  const described = await driverWith(
+    new RecordingExecutor(gatewayOnly({}, { port })),
+  ).describeAgentRuntime(revisionBinding(), new AbortController().signal);
+
+  const [pod] = described.pods;
+  assert.equal(pod.phase, "Running");
+  assert.equal(pod.containers[0].state, "running");
+  assert.equal(
+    pod.ready,
+    false,
+    "readiness must follow the endpoint, not the mere existence of a process",
+  );
+});
+
+test("a terminated container reports the engine's own status rather than a translation", async () => {
+  const executor = new RecordingExecutor(
+    gatewayOnly({
+      "inspect-container": (call) =>
+        call.request.input.name.includes("gateway")
+          ? {
+              ok: true,
+              output: { exists: true, running: false, exitCode: 3, health: "Exited (3)" },
+            }
+          : { ok: true, output: { exists: false } },
+    }),
+  );
+  const described = await driverWith(executor).describeAgentRuntime(
+    revisionBinding(),
+    new AbortController().signal,
+  );
+
+  const [pod] = described.pods;
+  assert.equal(pod.phase, "Failed");
+  assert.equal(pod.ready, false);
+  assert.equal(pod.containers[0].state, "terminated");
+  assert.equal(pod.containers[0].reason, "Exited (3)");
+  assert.equal(pod.containers[0].lastTermination.reason, "Exited (3)");
+  assert.equal(pod.containers[0].lastTermination.exitCode, 3);
 });
 
 test("readAgentRuntimeLogs returns bounded output and refuses what the engine cannot give", async () => {
@@ -1479,352 +1596,6 @@ test("preflight reports missing images and refuses a non-rootless engine", async
 test("an endpoint is only offered once a gateway port is known", () => {
   const driver = driverWith(new RecordingExecutor());
   assert.equal(driver.getGatewayEndpoint({ namespaceId: "ns_1", agentId: "agt_1" }), undefined);
-});
-
-// --- Paired Sandbox Driver: the dedicated Harness belongs to the provider ------------------
-// The Sandbox and Credential Gateway Drivers below stand in for the bundled OpenShell pair,
-// which their own suites cover against a fake Gateway. What is asserted here is this Compute
-// Driver's side of the pairing contract: who provisions the Harness, the endpoint the Gateway
-// is handed, which lifecycle points reach the Sandbox Driver, and what is refused.
-
-const SANDBOX_ID = "sandbox-openshell";
-
-/** Records every SandboxDriver call and answers with one provider-owned Sandbox. */
-function sandboxPair(status = "serving", events = []) {
-  const sandbox = {
-    id: SANDBOX_ID,
-    implementation: "openshell",
-    capability: "sandbox",
-    facets: ["credential-source"],
-    calls: [],
-    status,
-    async ensureNamespace(context) {
-      sandbox.calls.push(["ensureNamespace", context]);
-      events.push("sandbox.ensureNamespace");
-    },
-    async provisionHarness(context) {
-      sandbox.calls.push(["provisionHarness", context]);
-      events.push("sandbox.provisionHarness");
-      return {
-        namespaceName: context.namespace.name,
-        resourceName: "sb-0123456789abcdef",
-        agentId: context.revision.agentId,
-        revisionId: context.revision.id,
-      };
-    },
-    async harnessEndpoint(context) {
-      sandbox.calls.push(["harnessEndpoint", context]);
-      events.push("sandbox.harnessEndpoint");
-      return {
-        url: "ws://127.0.0.1:17670/sb-0123456789abcdef",
-        workspaceRoot: "/sandbox/enterprise",
-      };
-    },
-    async harnessStatus(context) {
-      sandbox.calls.push(["harnessStatus", context]);
-      events.push("sandbox.harnessStatus");
-      return { state: sandbox.status };
-    },
-    harnessResource({ namespace, revision }) {
-      return {
-        namespaceName: namespace.name,
-        resourceName: "sb-0123456789abcdef",
-        agentId: revision.agentId,
-        revisionId: revision.id,
-      };
-    },
-    async cleanup(context) {
-      sandbox.calls.push(["cleanup", context]);
-      events.push("sandbox.cleanup");
-    },
-  };
-  return sandbox;
-}
-
-/** Records every Credential Gateway call for one source. */
-function credentialGateway() {
-  const gateway = {
-    id: "openshell-credentials",
-    implementation: "openshell",
-    capability: "credential_gateway",
-    attached: undefined,
-    statusContext: undefined,
-    withdrawn: undefined,
-    async attachForRevision(context) {
-      gateway.attached = context.sources.map((source) => source.id);
-      return context.sources.map((source) => ({ sourceId: source.id, ref: `ref_${source.id}` }));
-    },
-    async attachmentStatus(context) {
-      gateway.statusContext = context;
-      return context.sources.map((source) => ({ sourceId: source.id, state: "ready" }));
-    },
-    async withdraw(context) {
-      gateway.withdrawn = context;
-      return { sourceId: context.sourceId, state: "revoked" };
-    },
-  };
-  return gateway;
-}
-
-function harnessEnvironment(requirements) {
-  return Object.fromEntries(requirements.environment.map((entry) => [entry.name, entry.value]));
-}
-
-test("a paired Sandbox Driver owns the Harness the Gateway is pointed at", async () => {
-  const executor = new RecordingExecutor();
-  const sandbox = sandboxPair();
-  const driver = driverWith(executor, {}, { sandboxDriver: sandbox });
-  const readiness = await driver.prepareRevision(
-    dedicatedRevision({ sandboxDriverId: SANDBOX_ID }),
-  );
-
-  assert.equal(readiness.ready, true);
-  assert.deepEqual(
-    sandbox.calls.map(([operation]) => operation),
-    ["provisionHarness", "harnessEndpoint", "harnessStatus"],
-  );
-  // This engine starts no harness container: the one runtime is the Gateway, and it is handed
-  // the provider endpoint instead of a container address.
-  const runs = executor.calls.filter((call) => call.request.operation === "run-container");
-  assert.equal(runs.length, 1);
-  assert.equal(runs[0].request.input.labels["org.openclaw.enterprise.role"], "gateway");
-  assert.equal(
-    runs[0].request.input.env.APP_SERVER_URL,
-    "ws://127.0.0.1:17670/sb-0123456789abcdef",
-  );
-
-  const provisioned = sandbox.calls[0][1];
-  // The Sandbox never reaches for a Kubernetes object client this engine does not have.
-  assert.equal(provisioned.kubernetes, undefined);
-  assert.equal(provisioned.namespace.name, (await driver.resolveSandboxNamespace(NAMESPACE)).name);
-  // One token for two roles: the Sandbox Harness presents what the Gateway presents.
-  const environment = harnessEnvironment(provisioned.requirements);
-  assert.equal(environment.APP_SERVER_TOKEN, runs[0].request.input.env.APP_SERVER_TOKEN);
-  assert.equal(environment.APP_SERVER_PORT, "18790");
-  // The provider runs the same bounded wrapper runtime the Kubernetes Harness uses, so it can
-  // install its workspace links before the Node program starts.
-  assert.deepEqual(provisioned.requirements.command.slice(0, 7), [
-    "/usr/bin/tini",
-    "-s",
-    "-e",
-    "143",
-    "--",
-    "node",
-    "-e",
-  ]);
-  // The volumes this Driver prepared are the ones the Sandbox reattaches, under the subpaths
-  // the Installation's sandboxDataMount selects.
-  assert.deepEqual(
-    provisioned.requirements.workspaceMounts.map((mount) => [mount.subPath, mount.mountPath]),
-    [
-      ["state", "/home/node/.codex"],
-      ["workspace", "/home/node/workspace"],
-    ],
-  );
-  assert.deepEqual(provisioned.requirements.labels["org.openclaw.enterprise.role"], "agent");
-});
-
-test("the Sandbox placement needs no cluster namespace", async () => {
-  const sandbox = sandboxPair();
-  const driver = driverWith(new RecordingExecutor(), {}, { sandboxDriver: sandbox });
-  const namespace = { ...NAMESPACE, status: "ready", createdAt: "2026-01-01T00:00:00.000Z" };
-  const placement = await driver.resolveSandboxNamespace(namespace);
-
-  // OpenShell v0.1.3-pre.2 names Workspaces within 19 characters, and this name is what both
-  // the Sandbox and Credential Gateway Drivers derive, so it must stay a DNS-1123 label.
-  assert.match(placement.name, /^oce-[0-9a-f]{15}$/);
-  assert.equal(placement.name.length, 19);
-  assert.equal(placement.id, NAMESPACE.id);
-
-  const ensured = await driver.ensureNamespace(namespace);
-  assert.equal(ensured.namespaceReady, true);
-  assert.deepEqual(
-    sandbox.calls.map(([operation]) => operation),
-    ["ensureNamespace"],
-  );
-  assert.equal(sandbox.calls[0][1].namespace.name, placement.name);
-  assert.equal(sandbox.calls[0][1].kubernetes, undefined);
-});
-
-test("a Sandbox that is not serving yet leaves the revision unready", async () => {
-  const executor = new RecordingExecutor();
-  const sandbox = sandboxPair("starting");
-  const driver = driverWith(executor, {}, { sandboxDriver: sandbox });
-  const readiness = await driver.prepareRevision(
-    dedicatedRevision({ sandboxDriverId: SANDBOX_ID }),
-  );
-
-  assert.equal(readiness.ready, false);
-  assert.ok(
-    !executor.operations().includes("run-container"),
-    "no Gateway is started before the Harness serves",
-  );
-
-  // A Harness holding its own startup failure fails the revision instead of looping.
-  sandbox.status = "failed";
-  await assert.rejects(
-    driver.prepareRevision(dedicatedRevision({ sandboxDriverId: SANDBOX_ID })),
-    /Sandbox Harness reported a failed startup/,
-  );
-});
-
-test("activation observes the Sandbox Harness instead of an agent container", async () => {
-  const executor = new RecordingExecutor();
-  const sandbox = sandboxPair();
-  const driver = driverWith(executor, {}, { sandboxDriver: sandbox });
-  const revision = dedicatedRevision({ sandboxDriverId: SANDBOX_ID });
-  await driver.prepareRevision(revision);
-  sandbox.calls.length = 0;
-  executor.calls.length = 0;
-
-  await driver.activateRevision(revision);
-  assert.deepEqual(
-    sandbox.calls.map(([operation]) => operation),
-    ["harnessEndpoint", "harnessStatus"],
-  );
-  assert.deepEqual(executor.operations(), [], "there is no container to inspect");
-
-  // Preparation saw the Harness serving; activation only proceeds while it still is.
-  sandbox.status = "starting";
-  await assert.rejects(driver.activateRevision(revision), /Sandbox Harness is not serving/);
-});
-
-test("stopping and retiring a revision delete its provider-owned Sandbox", async () => {
-  const sandbox = sandboxPair();
-  const driver = driverWith(new RecordingExecutor(), {}, { sandboxDriver: sandbox });
-  const revision = dedicatedRevision({ sandboxDriverId: SANDBOX_ID });
-
-  await driver.stopRevision(revision);
-  assert.deepEqual(
-    sandbox.calls.map(([operation]) => operation),
-    ["cleanup"],
-  );
-  assert.equal(sandbox.calls[0][1].revision.id, revision.id);
-
-  sandbox.calls.length = 0;
-  await driver.retireRevision(revision);
-  assert.deepEqual(
-    sandbox.calls.map(([operation]) => operation),
-    ["cleanup"],
-  );
-});
-
-test("deleting a Namespace removes its Sandboxes before its volumes", async () => {
-  const events = [];
-  const executor = new RecordingExecutor();
-  const invoke = executor.invoke.bind(executor);
-  executor.invoke = async (call) => {
-    events.push(call.request.operation);
-    return invoke(call);
-  };
-  const sandbox = sandboxPair("serving", events);
-  const driver = driverWith(executor, {}, { sandboxDriver: sandbox });
-  const result = await driver.deleteNamespace(NAMESPACE);
-
-  assert.equal(result.namespaceDeleted, true);
-  assert.deepEqual(
-    sandbox.calls.map(([operation]) => operation),
-    ["cleanup"],
-  );
-  // The whole Namespace is going, so the Sandbox cleanup carries no revision.
-  assert.equal(sandbox.calls[0][1].revision, undefined);
-  assert.ok(
-    events.indexOf("sandbox.cleanup") < events.indexOf("remove-volumes"),
-    "a Sandbox still holding a volume must go first",
-  );
-});
-
-test("credential withdrawal reaches the Gateway with the revision's Sandbox identity", async () => {
-  const sandbox = sandboxPair();
-  const gateway = credentialGateway();
-  const driver = driverWith(
-    new RecordingExecutor(),
-    {},
-    { sandboxDriver: sandbox, credentialGatewayDriver: gateway },
-  );
-  const revision = dedicatedRevision({ sandboxDriverId: SANDBOX_ID });
-  const status = await driver.withdrawCredentialSource(
-    revision,
-    { id: "cs_1" },
-    new AbortController().signal,
-    {},
-  );
-
-  assert.equal(status.state, "revoked");
-  assert.equal(gateway.withdrawn.sourceId, "cs_1");
-  assert.equal(gateway.withdrawn.sandbox.resourceName, "sb-0123456789abcdef");
-  assert.equal(gateway.withdrawn.namespace.id, revision.namespaceId);
-  assert.equal(gateway.withdrawn.sandbox.namespaceName, gateway.withdrawn.namespace.name);
-
-  // A revision with no Sandbox has nothing to revoke from.
-  await assert.rejects(
-    driver.withdrawCredentialSource(
-      dedicatedRevision(),
-      { id: "cs_1" },
-      new AbortController().signal,
-    ),
-    /Credential withdrawal requires a SandboxDriver/,
-  );
-});
-
-test("credential sources are attached to the Sandbox and need one to exist", async () => {
-  const executor = new RecordingExecutor();
-  const sandbox = sandboxPair();
-  const gateway = credentialGateway();
-  const driver = driverWith(
-    executor,
-    {},
-    {
-      sandboxDriver: sandbox,
-      credentialGatewayDriver: gateway,
-    },
-  );
-  const readiness = await driver.prepareRevision(
-    dedicatedRevision({ sandboxDriverId: SANDBOX_ID }),
-    {
-      secretEnvironment: [],
-      harnessAuth: { method: "runtime" },
-      credentialSources: [{ id: "cs_1" }],
-    },
-  );
-
-  assert.equal(readiness.ready, true);
-  assert.deepEqual(gateway.attached, ["cs_1"]);
-  assert.deepEqual(sandbox.calls[0][1].requirements.credentialAttachments, [
-    { sourceId: "cs_1", ref: "ref_cs_1" },
-  ]);
-  // Attachment status is observed against the Sandbox provisioning created.
-  assert.equal(gateway.statusContext.sandbox.resourceName, "sb-0123456789abcdef");
-  assert.equal(gateway.statusContext.namespace.name, sandbox.calls[0][1].namespace.name);
-
-  // Without a Sandbox there is nothing to attach to, so the delivery never touches the engine.
-  const unpaired = new RecordingExecutor();
-  await assert.rejects(
-    driverWith(unpaired).prepareRevision(dedicatedRevision(), {
-      secretEnvironment: [],
-      harnessAuth: { method: "runtime" },
-      credentialSources: [{ id: "cs_1" }],
-    }),
-    /credential sources require a Sandbox Driver/,
-  );
-  assert.deepEqual(unpaired.operations(), [], "no engine call before the refusal");
-});
-
-test("a pairing this Driver cannot honour is refused at construction", () => {
-  assert.throws(
-    () => driverWith(new RecordingExecutor(), {}, { credentialGatewayDriver: credentialGateway() }),
-    /Credential Gateway Driver requires a paired Sandbox Driver/,
-  );
-});
-
-test("a revision pinned to another Sandbox Driver is never delivered", async () => {
-  const sandbox = sandboxPair();
-  const driver = driverWith(new RecordingExecutor(), {}, { sandboxDriver: sandbox });
-  await assert.rejects(
-    driver.prepareRevision(dedicatedRevision({ sandboxDriverId: "another-sandbox" })),
-    /pinned to another SandboxDriver/,
-  );
-  assert.deepEqual(sandbox.calls, []);
 });
 
 // --- Codex OAuth: the staged login is consumed and seeded into the harness's own home -------
@@ -2157,6 +1928,78 @@ test("the harness runtime command fits the kernel's per-argument limit", async (
   assert.deepEqual(agent.request.input.readiness.command.slice(0, 2), ["node", "-e"]);
 });
 
+test("a spent or missing staged login fails as permanent configuration, not as a retry", async () => {
+  // A spent login cannot be fixed by retrying: the operator must sign in again. The platform
+  // reads the Driver's own classification, so it must say permanent and name configuration.
+  const spent = await stagedLogin({
+    phase: "consumed",
+    agentId: "agt_other",
+    volumeUid: "0".repeat(32),
+  });
+  const driver = oauthDriver(new RecordingExecutor());
+  const refused = await driver.prepareRevision(dedicatedRevision(), oauthContext(spent)).then(
+    () => undefined,
+    (error) => error,
+  );
+  assert.match(String(refused?.message), /Consumed OAuth credentials cannot be replaced/);
+  const diagnostic = driver.describePrepareRevisionFailure(refused);
+  assert.equal(diagnostic?.code, "CONTAINERD_CONFIGURATION_INVALID");
+  // The platform validates the stage vocabulary before it trusts any field: a hyphen made the
+  // whole diagnostic invalid, so nothing was logged and nothing was classified.
+  assert.match(String(diagnostic?.stage), /^[a-z][a-z0-9_]{0,63}$/);
+  assert.equal(diagnostic?.permanent, true, "retrying a spent login only burns the budget");
+
+  // Preparation aggregates the primary failure with a cleanup failure. The classification must
+  // survive that wrapper, or every permanent cause wrapped this way is retried instead.
+  const wrapped = new AggregateError(
+    [refused, new Error("cleanup failed")],
+    "compute-containerd workload preparation and cleanup failed.",
+    { cause: refused },
+  );
+  assert.deepEqual(driver.describePrepareRevisionFailure(wrapped), diagnostic);
+
+  // A login that was never staged is the same class of operator fix.
+  const foreign = oauthContext(await stagedLogin());
+  const missing = await driver
+    .prepareRevision(dedicatedRevision(), {
+      ...foreign,
+      harnessAuth: {
+        ...foreign.harnessAuth,
+        source: { kind: "secret", namespaceId: "ns_1", id: "sec_absent" },
+      },
+    })
+    .then(
+      () => undefined,
+      (error) => error,
+    );
+  assert.equal(
+    driver.describePrepareRevisionFailure(missing)?.code,
+    "CONTAINERD_CONFIGURATION_INVALID",
+  );
+  assert.equal(driver.describePrepareRevisionFailure(missing)?.permanent, true);
+});
+
+test("a helper deadline is retried rather than classified as permanent", async () => {
+  // A first start can miss the readiness deadline and succeed on the next pass, and the helper
+  // omits its retry hint on most failures. Permanence must come from a semantic refusal, never
+  // from a missing hint, or one slow start would end a deployment for good.
+  const executor = new RecordingExecutor({
+    "run-container": {
+      ok: false,
+      error: { code: "TIMEOUT", message: "readiness deadline exceeded", retryable: false },
+    },
+  });
+  const error = await driverWith(executor)
+    .prepareRevision(dedicatedRevision())
+    .then(
+      () => undefined,
+      (failure) => failure,
+    );
+  const diagnostic = driverWith(new RecordingExecutor()).describePrepareRevisionFailure(error);
+  assert.equal(diagnostic?.code, "TIMEOUT");
+  assert.equal(diagnostic?.permanent, undefined, "a timeout must leave the platform free to retry");
+});
+
 test("a staged login is identified by the uid its Driver issued, not by the reference name", async () => {
   // A Secret Driver with no cluster coordinates publishes an opaque locator as its backend
   // name - the filesystem Driver hashes the Namespace and Secret names - while the document
@@ -2208,4 +2051,135 @@ test("the staged setup payload is owner-only in a unique owner-only directory", 
   assert.equal((await stat(first.path)).mode & 0o777, 0o600);
   assert.equal((await stat(first.path)).nlink, 1);
   assert.deepEqual(JSON.parse(await readFile(first.path, "utf8")), setup);
+});
+
+// --- Provider key: the OpenAI key a dedicated Codex harness authenticates with ----------------
+// The platform stages the key as a Secret in the selected Secret Driver and hands the revision
+// only the reference it resolved. The Driver reads that store, exactly as the Kubernetes Compute
+// Driver reads the same Secret through its cluster API, and the key reaches the dedicated Codex
+// harness environment and nothing else. This stage uses the real filesystem Secret Driver, so the
+// store layout this Driver reads is the layout that Driver writes.
+
+/** A synthetic key: this stage proves the delivery path, not the provider. */
+const PROVIDER_KEY = "provider-key-conformance-canary";
+
+async function stagedProviderKey(value = PROVIDER_KEY) {
+  const driver = new FilesystemSecretDriver({ directory: SECRET_STORE });
+  const identity = {
+    id: `sec_${randomBytes(8).toString("hex")}`,
+    namespaceId: "ns_1",
+    name: "Provider key",
+  };
+  const backendRef = await driver.create(identity, value);
+  return {
+    driver,
+    secretId: identity.id,
+    namespaceId: identity.namespaceId,
+    backendRef,
+  };
+}
+
+function providerKeyContext(key) {
+  return {
+    secretEnvironment: [],
+    harnessAuth: {
+      method: "api_key",
+      source: { kind: "secret", namespaceId: key.namespaceId, id: key.secretId },
+      secretDriverId: "occ/filesystem-secret",
+      backendRef: key.backendRef,
+    },
+  };
+}
+
+function providerKeyDriver(executor) {
+  return driverWith(executor, {}, { secretStore: { directory: SECRET_STORE } });
+}
+
+test("a staged provider key reaches the dedicated harness environment and nothing else", async () => {
+  const executor = new RecordingExecutor();
+  const key = await stagedProviderKey();
+  const driver = providerKeyDriver(executor);
+  const revision = dedicatedRevision();
+  const readiness = await driver.prepareRevision(revision, providerKeyContext(key));
+  assert.equal(readiness.ready, true);
+
+  // The shared Codex runtime logs in with `codex login --with-api-key`, reading the key from
+  // stdin, so the harness environment is the only place the value may appear.
+  const agent = executor.calls.find(
+    (call) =>
+      call.request.operation === "run-container" &&
+      call.request.input.labels["org.openclaw.enterprise.role"] === "agent",
+  );
+  assert.equal(agent.request.input.env.OPENAI_API_KEY, PROVIDER_KEY);
+  assert.equal(agent.request.input.env.CODEX_LOGIN_MODE, "api_key");
+  assert.ok(
+    !JSON.stringify(agent.request.input.args).includes(PROVIDER_KEY),
+    "the key must never become a container argument",
+  );
+  // The helper runs every readiness probe with a fixed minimal environment and cwd `/`, so the
+  // harness probe must be self-contained: it checks the Codex app-server's own local port
+  // instead of the shared entrypoint, which needs the container's token variables and its
+  // module path and can only ever fail there.
+  const probe = agent.request.input.readiness.command;
+  assert.deepEqual(probe.slice(0, 2), ["node", "-e"]);
+  assert.match(probe[2], /127\.0\.0\.1:18790\/readyz/);
+  assert.ok(!probe.join(" ").includes("OCE_CODEX_OAUTH"), "the probe needs no receipt");
+
+  // The gateway serves clients and reaches the harness over the transport channel; a model
+  // credential belongs to the harness that executes turns, never to this container.
+  const gateway = executor.calls.find(
+    (call) =>
+      call.request.operation === "run-container" &&
+      call.request.input.labels["org.openclaw.enterprise.role"] === "gateway",
+  );
+  assert.equal(gateway.request.input.env.OPENAI_API_KEY, undefined);
+  assert.ok(
+    !JSON.stringify(gateway.request.input).includes(PROVIDER_KEY),
+    "the key must not reach the gateway in any field",
+  );
+
+  // One delivery, one recipient: every other helper call, including the workspace initializer
+  // and the readiness probe, must be free of the value.
+  const carriers = executor.calls.filter((call) =>
+    JSON.stringify(call.request.input).includes(PROVIDER_KEY),
+  );
+  assert.equal(carriers.length, 1, "only the dedicated harness container may carry the key");
+  assert.equal(carriers[0], agent);
+
+  // A value the store no longer owns is refused rather than delivered under another identity.
+  const foreign = providerKeyContext({
+    ...key,
+    backendRef: { ...key.backendRef, uid: randomUUID() },
+  });
+  await assert.rejects(
+    providerKeyDriver(new RecordingExecutor()).prepareRevision(dedicatedRevision(), foreign),
+    /changed ownership/,
+  );
+});
+
+test("the initializer clears an earlier login before it hands the Codex home over", async () => {
+  // A dedicated Codex harness that seeds no OAuth bundle must not leave an earlier personal login
+  // refreshing on the Agent's disk. Removing it after the ownership handoff fails: a container
+  // root without `DAC_OVERRIDE` cannot write a directory the workload user owns, so a delivery
+  // over an already-handed-over Codex home dies before its harness ever starts.
+  const executor = new RecordingExecutor({
+    "run-to-completion": { ok: true, output: { running: false, exitCode: 0 } },
+  });
+  const readiness = await providerKeyDriver(executor).prepareRevision(
+    dedicatedRevision(),
+    providerKeyContext(await stagedProviderKey()),
+  );
+  assert.equal(readiness.ready, true);
+
+  const setup = executor.calls.find((call) => call.request.operation === "run-to-completion");
+  const script = setup.request.input.args[1];
+  const clear = script.indexOf('chownSync("/home/node/.codex", 0, 0)');
+  const handoff = script.indexOf("chownSync(path, 1000, 1000)");
+  assert.ok(clear >= 0, "a delivery that seeds no OAuth bundle clears an earlier login");
+  assert.ok(
+    handoff > clear,
+    "the earlier login is cleared before the Codex home is handed to the workload user",
+  );
+  assert.ok(script.includes("auth.json") && script.includes(".oce-oauth.json"));
+  assert.match(script, /rmSync\(/);
 });

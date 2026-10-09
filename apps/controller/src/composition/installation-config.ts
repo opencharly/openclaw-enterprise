@@ -625,9 +625,9 @@ export async function loadInstallationConfiguration(options: {
       "drivers.repo requires the bundled Kubernetes Compute Driver without a Sandbox Driver.",
     );
   }
-  if (sshCompute && sandboxSelection !== undefined) {
+  if ((sshCompute || containerdCompute) && sandboxSelection !== undefined) {
     throw new Error(
-      "drivers.sandbox is unsupported with compute-ssh; it requires the bundled Kubernetes Compute Driver.",
+      "drivers.sandbox is unsupported with compute-ssh or compute-containerd; it requires the bundled Kubernetes Compute Driver.",
     );
   }
   const sandboxPackage =
@@ -702,13 +702,6 @@ export async function loadInstallationConfiguration(options: {
   if (sandbox !== undefined && computePackage !== undefined) {
     throw new Error("drivers.sandbox requires the bundled Kubernetes Compute Driver.");
   }
-  // Only the bundled OpenShell Sandbox Driver is independent of a Kubernetes object client;
-  // an external Sandbox package is a Kubernetes Gateway and cannot pair with another engine.
-  if (sandbox !== undefined && !kubernetesCompute && sandboxPackage !== undefined) {
-    throw new Error(
-      "drivers.sandbox requires the bundled OpenShell Sandbox Driver with a non-Kubernetes Compute Driver.",
-    );
-  }
   if (sandbox !== undefined && sandboxPackage === undefined && openShellBackend === undefined) {
     throw new Error(
       "The bundled OpenShell drivers.sandbox requires a backend entry with type openshell.",
@@ -724,31 +717,8 @@ export async function loadInstallationConfiguration(options: {
       `backend[${openShellBackend.id}].drivers.sandbox must match the selected bundled OpenShell drivers.sandbox.id.`,
     );
   }
-  if (containerdCompute && sandbox !== undefined) {
-    // A non-Kubernetes Compute Driver has no object client, so the Sandbox must own its
-    // Workspace through the Gateway. Operator mode's Kubernetes resources and readiness would
-    // have nowhere to apply, and its Workspace name would be a cluster namespace that no engine
-    // here provisions.
-    const sandboxGateway = object(
-      (sandbox.configuration as ConfigurationRecord).gateway,
-      "drivers.sandbox.configuration.gateway",
-    );
-    if (sandboxGateway.workspaceMode !== "managed") {
-      throw new Error(
-        "drivers.sandbox with compute-containerd requires gateway.workspaceMode: managed.",
-      );
-    }
-  }
-  if (
-    containerdCompute &&
-    openShellBackend !== undefined &&
-    openShellBackend.configuration.endpoint === undefined
-  ) {
-    // A bare gateway Service resolves as `<name>.<namespace>.svc`, which only a Kubernetes
-    // engine can reach; a non-Kubernetes Compute Driver needs the endpoint it dials directly.
-    throw new Error(
-      "An openshell backend with compute-containerd requires an explicit gateway endpoint.",
-    );
+  if (credentialGateway !== undefined && !kubernetesCompute) {
+    throw new Error("drivers.credential_gateway requires the bundled Kubernetes Compute Driver.");
   }
   if (options.mode === "production" && kubernetesCompute) {
     const kubernetes = compute.configuration as unknown as KubernetesComputeDriverOptions;
@@ -856,8 +826,6 @@ export async function loadInstallationConfiguration(options: {
         id: compute.id,
         implementation: compute.implementation,
         lifecycleDrivers: [configurationDriver],
-        ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
-        ...(credentialGatewayDriver === undefined ? {} : { credentialGatewayDriver }),
         // A staged Codex OAuth login lives in the selected Secret Driver's store, exactly as it
         // lives in the cluster Secret API for the Kubernetes Compute Driver. Inject the store
         // that Driver already owns instead of making the operator name the same path twice.

@@ -374,9 +374,6 @@ failed retry keeps the active runtime.
   require PostgreSQL; none proves real model execution.
 - [OCC API](../../tests/integration/occ-api.test.mjs) checks deploy audit attribution
   and append-failure rollback on the authenticated route after changing IAM Drivers.
-- [Sandbox startup](../../tests/integration/sandbox-driver-startup.test.mjs) verifies
-  composition; [k3d integration](../../tests/integration/sandbox-driver-openshell-k3d-real.test.mjs)
-  verifies infrastructure.
 
 ## Related docs
 

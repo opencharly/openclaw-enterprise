@@ -50,7 +50,7 @@ function installation() {
   return value;
 }
 
-/** The same Installation plus the OpenShell sandbox and credential path, as it must compose. */
+/** The same Installation plus an OpenShell sandbox and credential path to be refused. */
 function sandboxInstallation() {
   const value = installation();
   value.backend = [
@@ -116,50 +116,13 @@ test("containerd startup selects occ/containerd in production and constructs a w
   );
 });
 
-test("containerd startup pairs the bundled OpenShell Sandbox with a non-Kubernetes Compute Driver", async (t) => {
-  const drivers = await loadInstallationFile(t, sandboxInstallation());
-  assert.ok(drivers.computeDriver instanceof ContainerdComputeDriver);
-  assert.equal(drivers.installation.drivers.sandbox.id, "openshell-sandbox");
-  assert.equal(drivers.installation.drivers.credential_gateway.id, "openshell-credentials");
-  // The pairing is injected into the Compute Driver, so the same document composes in the
-  // development profile and is admitted in production.
-  assert.ok(
-    (await loadInstallationFile(t, sandboxInstallation(), { mode: "development" }))
-      .computeDriver instanceof ContainerdComputeDriver,
-  );
-
-  const operatorMode = sandboxInstallation();
-  operatorMode.drivers.sandbox.configuration.gateway.workspaceMode = "operator";
+test("containerd startup refuses a paired Sandbox Driver", async (t) => {
+  // The containerd Compute Driver runs the Harness on its own engine and holds no Sandbox
+  // placement, so a paired Sandbox Driver has no workload to own. The pairing is refused at
+  // composition rather than composed and then never consulted.
   await assert.rejects(
-    loadInstallationFile(t, operatorMode),
-    /drivers\.sandbox with compute-containerd requires gateway\.workspaceMode: managed/,
-  );
-
-  // A bare Service name only resolves inside a Kubernetes Sandbox namespace.
-  const serviceName = sandboxInstallation();
-  delete serviceName.backend[0].configuration.endpoint;
-  serviceName.backend[0].configuration.serviceName = "openshell-gateway";
-  await assert.rejects(
-    loadInstallationFile(t, serviceName),
-    /openshell backend with compute-containerd requires an explicit gateway endpoint/,
-  );
-
-  // A Credential Gateway cannot be left unpaired: its owning openshell backend must name the
-  // Sandbox Driver the Installation also selects.
-  const unpaired = sandboxInstallation();
-  delete unpaired.drivers.sandbox;
-  await assert.rejects(
-    loadInstallationFile(t, unpaired),
-    /backend\[openshell\]\.drivers\.sandbox must match the selected bundled OpenShell drivers\.sandbox\.id/,
-  );
-
-  // A bundled Sandbox selection without its owning openshell backend is refused, not ignored.
-  const orphan = sandboxInstallation();
-  delete orphan.backend;
-  delete orphan.drivers.credential_gateway;
-  await assert.rejects(
-    loadInstallationFile(t, orphan),
-    /bundled OpenShell drivers\.sandbox requires a backend entry with type openshell/,
+    loadInstallationFile(t, sandboxInstallation()),
+    /drivers\.sandbox is unsupported with compute-ssh or compute-containerd/,
   );
 });
 
