@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
-import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/runtime/program-helpers.ts";
 import { ensureDevelopmentBootstrap } from "./bootstrap-installation.mjs";
 import { createHarnessConfiguration } from "./harness-configuration.mjs";
 import { grantAgentSecretOperate } from "./postgres-harness-auth.mjs";

@@ -116,11 +116,14 @@ import {
   WORKSPACE_SETUP_RUNTIME,
   workspaceSetupMainAgent,
   workspaceSetupVerifier,
-} from "../workspace-setup-runtime.ts";
-import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
-import { nodeProgramArguments } from "../node-program.ts";
-import { discoverHarnessModels } from "../model-discovery.ts";
-import { pollHarnessDeviceAuthorization, startHarnessDeviceAuthorization } from "../device-auth.ts";
+} from "../runtime/workspace-setup.ts";
+import { ComputeLifecycleDispatcher } from "../runtime/lifecycle-hooks.ts";
+import { nodeProgramArguments } from "../runtime/node-program.ts";
+import { discoverHarnessModels } from "../runtime/model-discovery.ts";
+import {
+  pollHarnessDeviceAuthorization,
+  startHarnessDeviceAuthorization,
+} from "../runtime/device-auth.ts";
 import {
   OAUTH_AGENT_ANNOTATION,
   OAUTH_PHASE_ANNOTATION,
@@ -130,7 +133,7 @@ import {
   computeWorkWaiting,
   currentComputeAbortSignal,
   withComputeAbortSignal,
-} from "../operation-context.ts";
+} from "../runtime/operation-context.ts";
 import { unsupportedNativeGatewayAuthFields } from "../../../gateway/auth-fields.ts";
 import type {
   GatewayNodeEnrollment,
@@ -148,18 +151,17 @@ import {
   type PluginRuntimeSpec,
   pluginRuntimeConfigMapData,
   pluginRuntimeSpecForRevision,
-} from "../plugin-runtime.ts";
+} from "../runtime/plugin-runtime.ts";
 import {
-  AGENT_RUNTIME_ENTRYPOINT,
   AGENT_WITH_NODE_ENTRYPOINT,
   CODEX_OAUTH_BOOTSTRAP_ENTRYPOINT,
   GATEWAY_RUNTIME_ENTRYPOINT,
   GATEWAY_STOP_TIMEOUT_MS,
   NATIVE_WORKER_ENTRYPOINT,
-  RUNTIME_READINESS_PATH,
-  RUNTIME_WRAPPER_COMMAND,
-  SETUP_WRAPPER_COMMAND,
 } from "./runtime-entrypoints.ts";
+import { AGENT_READINESS_ENTRYPOINT, AGENT_RUNTIME_ENTRYPOINT } from "../runtime/agent.ts";
+import { RUNTIME_WRAPPER_COMMAND, SETUP_WRAPPER_COMMAND } from "../runtime/node-program.ts";
+import { RUNTIME_READINESS_PATH } from "../runtime/program-helpers.ts";
 
 import {
   REPOSITORY_MATERIAL_GENERATION,

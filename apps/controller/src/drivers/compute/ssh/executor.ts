@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { currentComputeAbortSignal } from "../operation-context.ts";
+import { currentComputeAbortSignal } from "../runtime/operation-context.ts";
 
 export interface SshCommand {
   readonly address: string;

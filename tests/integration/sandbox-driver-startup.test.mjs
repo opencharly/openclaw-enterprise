@@ -11,8 +11,8 @@ import {
 import { OpenShellCredentialGatewayDriver } from "../../apps/controller/src/drivers/credential-gateway/openshell.ts";
 import { createKubernetesComputeDriver } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 import { OpenShellCredentialRefreshDriver } from "../../apps/controller/src/drivers/credential-refresh/openshell.ts";
-import { RUNTIME_WRAPPER_COMMAND } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
-import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/node-program.ts";
+import { RUNTIME_WRAPPER_COMMAND } from "../../apps/controller/src/drivers/compute/runtime/node-program.ts";
+import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/runtime/node-program.ts";
 import { OpenShellSandboxDriver } from "../../apps/controller/src/drivers/sandbox/openshell.ts";
 import {
   normalizeServiceUrl,

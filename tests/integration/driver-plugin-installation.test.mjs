@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { resolveApprovedProductionHarness } from "../../apps/controller/src/composition/production-harness.ts";
 import { loadInstallationConfiguration } from "../../apps/controller/src/composition/installation-config.ts";
-import { withComputeAbortSignal } from "../../apps/controller/src/drivers/compute/operation-context.ts";
+import { withComputeAbortSignal } from "../../apps/controller/src/drivers/compute/runtime/operation-context.ts";
 import { createFastifyApp } from "../../apps/controller/src/index.ts";
 import { createControllerWorker } from "../../apps/controller/src/worker.ts";
 import { InMemoryAuditSink } from "../../packages/audit/src/index.ts";

@@ -57,7 +57,7 @@ Secret value outside a credential gateway.
   (`:3225-3255`), and enforces tenant budgets with `ResourceQuota` and `LimitRange` (`:4025`).
 - **What the rootless Driver already owns** is the substrate this plan builds on: Agent-owned
   credential files with provisioning, preservation and deletion
-  (`apps/controller/src/drivers/compute/nerdctl/credentials.ts`), an egress proxy standing on the
+  (`apps/controller/src/drivers/compute/containerd/credentials.ts`), an egress proxy standing on the
   Agent's no-egress plane and on the plane that reaches outside with an Installation allowlist
   (`nerdctl/spec.ts`, `index.ts:ensureEgressProxy`), and a relay that publishes the gateway's port
   across those planes (`index.ts:reconcileRelay`).
@@ -65,8 +65,8 @@ Secret value outside a credential gateway.
   workload environment to the harness alone and give the gateway only the transport endpoint and
   token (`index.ts`).
 - Affected documentation: the
-  [nerdctl Compute reference](../../docs/reference/drivers/nerdctl-compute.md), the
-  [delivery flow](../../docs/flows/nerdctl-compute-delivery.md), and the capability matrix.
+  [containerd Compute reference](../../docs/reference/drivers/containerd-compute.md), the
+  [delivery flow](../../docs/flows/containerd-compute-delivery.md), and the capability matrix.
 
 ## Implementation
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import test from "node:test";
-import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/runtime/program-helpers.ts";
 
 // The companion protocol fixture owns deterministic timing and write-order
 // assertions. This opt-in case verifies the pinned external server contract.

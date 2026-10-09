@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -36,8 +36,15 @@ test("filesystem-secret-driver stores, verifies, updates, resolves and deletes o
 
   // The value belongs to one stored file whose permissions keep it off other accounts.
   const stored = join(directory, (await findStoredFile(directory)).name);
-  assert.equal((await stat(stored)).mode & 0o777, 0o600);
-  assert.ok((await readFile(stored, "utf8")).includes("s3cret-one"));
+  // One open, then the mode and the content of *that* descriptor: reading the path twice would
+  // leave a window in which the file a second call saw need not be the file the first one did.
+  const storedHandle = await open(stored, "r");
+  try {
+    assert.equal((await storedHandle.stat()).mode & 0o777, 0o600);
+    assert.ok((await storedHandle.readFile("utf8")).includes("s3cret-one"));
+  } finally {
+    await storedHandle.close();
+  }
 
   const secret = { ...IDENTITY, driverId: driver.id, backendRef: reference, createdAt: "now" };
   assert.deepEqual(await driver.resolve(secret), reference);

@@ -15,7 +15,7 @@ import { createHarnessConfiguration } from "./harness-configuration.mjs";
 import { createModelProbeCertificates } from "./runtime-model-probe-certificates.mjs";
 import { modelProbeDiagnostic } from "./runtime-model-probe-observation.mjs";
 import { GATEWAY_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
-import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/node-program.ts";
+import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/runtime/node-program.ts";
 import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 
 // The embedded Gateway's startup model probe on the real runtime image, under

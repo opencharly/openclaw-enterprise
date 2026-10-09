@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { AGENT_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { AGENT_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/runtime/agent.ts";
 
 const execute = promisify(execFile);
 const image = process.env.OCC_TEST_CODEX_PROBE_IMAGE;

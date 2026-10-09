@@ -16,7 +16,7 @@ import test from "node:test";
 import {
   WORKSPACE_SETUP_RUNTIME,
   workspaceSetupVerifier,
-} from "../../apps/controller/src/drivers/compute/workspace-setup-runtime.ts";
+} from "../../apps/controller/src/drivers/compute/runtime/workspace-setup.ts";
 import {
   WORKSPACE_DEFAULTS,
   WORKSPACE_DEFAULTS_ID,

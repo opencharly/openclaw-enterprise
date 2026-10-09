@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ComputeLifecycleDispatcher } from "../../apps/controller/src/drivers/compute/lifecycle-hooks.ts";
-import { withComputeAbortSignal } from "../../apps/controller/src/drivers/compute/operation-context.ts";
+import { ComputeLifecycleDispatcher } from "../../apps/controller/src/drivers/compute/runtime/lifecycle-hooks.ts";
+import { withComputeAbortSignal } from "../../apps/controller/src/drivers/compute/runtime/operation-context.ts";
 
 const namespace = Object.freeze({
   id: "namespace-support",

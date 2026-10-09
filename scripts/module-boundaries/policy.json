@@ -93,7 +93,8 @@
       "from": ["apps/controller/src/drivers/compute/docker/**"],
       "to": [
         "apps/controller/src/drivers/compute/kubernetes/**",
-        "apps/controller/src/drivers/compute/ssh/**"
+        "apps/controller/src/drivers/compute/ssh/**",
+        "apps/controller/src/drivers/compute/containerd/**"
       ],
       "message": "Shared Compute behavior must live in a provider-neutral module."
     },
@@ -102,7 +103,8 @@
       "from": ["apps/controller/src/drivers/compute/kubernetes/**"],
       "to": [
         "apps/controller/src/drivers/compute/docker/**",
-        "apps/controller/src/drivers/compute/ssh/**"
+        "apps/controller/src/drivers/compute/ssh/**",
+        "apps/controller/src/drivers/compute/containerd/**"
       ],
       "message": "Shared Compute behavior must live in a provider-neutral module."
     },
@@ -111,9 +113,31 @@
       "from": ["apps/controller/src/drivers/compute/ssh/**"],
       "to": [
         "apps/controller/src/drivers/compute/docker/**",
-        "apps/controller/src/drivers/compute/kubernetes/**"
+        "apps/controller/src/drivers/compute/kubernetes/**",
+        "apps/controller/src/drivers/compute/containerd/**"
       ],
       "message": "Shared Compute behavior must live in a provider-neutral module."
+    },
+    {
+      "rule": "cross-provider-implementation",
+      "from": ["apps/controller/src/drivers/compute/containerd/**"],
+      "to": [
+        "apps/controller/src/drivers/compute/docker/**",
+        "apps/controller/src/drivers/compute/kubernetes/**",
+        "apps/controller/src/drivers/compute/ssh/**"
+      ],
+      "message": "Shared Compute behavior must live in a provider-neutral module."
+    },
+    {
+      "rule": "cross-provider-implementation",
+      "from": ["apps/controller/src/drivers/compute/runtime/**"],
+      "to": [
+        "apps/controller/src/drivers/compute/docker/**",
+        "apps/controller/src/drivers/compute/kubernetes/**",
+        "apps/controller/src/drivers/compute/ssh/**",
+        "apps/controller/src/drivers/compute/containerd/**"
+      ],
+      "message": "A provider-neutral compute module must not depend on a Driver implementation."
     }
   ],
   "diagnosticLimit": 30

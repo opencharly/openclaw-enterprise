@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { AGENT_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
-import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/node-program.ts";
+import { AGENT_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/runtime/agent.ts";
+import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/runtime/node-program.ts";
 import {
   createKubernetesComputeDriver,
   kubernetesNamespaceName,

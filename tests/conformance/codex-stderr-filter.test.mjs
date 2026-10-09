@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import vm from "node:vm";
-
-import {
-  AGENT_RUNTIME_ENTRYPOINT,
-  CODEX_STDERR_FILTER_HELPER,
-} from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { AGENT_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/runtime/agent.ts";
+import { CODEX_STDERR_FILTER_HELPER } from "../../apps/controller/src/drivers/compute/runtime/program-helpers.ts";
 
 // Lines in the shape Codex 0.158 `app-server` prints with LOG_FORMAT=json (FmtSpan::FULL).
 const record = (level, target, fields, span) =>

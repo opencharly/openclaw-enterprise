@@ -22,29 +22,29 @@ import {
   WORKSPACE_SETUP_RUNTIME,
   workspaceSetupMainAgent,
   workspaceSetupVerifier,
-} from "../workspace-setup-runtime.ts";
-import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
-import { nodeProgramArguments } from "../node-program.ts";
-import { discoverHarnessModels } from "../model-discovery.ts";
-import { currentComputeAbortSignal, withComputeAbortSignal } from "../operation-context.ts";
-import {
-  AGENT_READINESS_ENTRYPOINT,
-  AGENT_RUNTIME_ENTRYPOINT,
-} from "../kubernetes/runtime-entrypoints.ts";
+} from "../runtime/workspace-setup.ts";
+import { ComputeLifecycleDispatcher } from "../runtime/lifecycle-hooks.ts";
+import { nodeProgramArguments } from "../runtime/node-program.ts";
+import { discoverHarnessModels } from "../runtime/model-discovery.ts";
+import { currentComputeAbortSignal, withComputeAbortSignal } from "../runtime/operation-context.ts";
+import { AGENT_READINESS_ENTRYPOINT, AGENT_RUNTIME_ENTRYPOINT } from "../runtime/agent.ts";
 import {
   PLUGIN_RUNTIME_READY_MARKER,
   PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT,
   type PluginRuntimeSpec,
   pluginRuntimeEnvironment,
   pluginRuntimeSpecForRevision,
-} from "../plugin-runtime.ts";
+} from "../runtime/plugin-runtime.ts";
 import { unsupportedNativeGatewayAuthFields } from "../../../gateway/auth-fields.ts";
 import {
   GATEWAY_PASSWORD_ENV,
   GATEWAY_PASSWORD_REFERENCE,
   GATEWAY_RUNTIME_ENTRYPOINT,
-} from "../gateway-runtime.ts";
+} from "../runtime/gateway.ts";
 
+// Re-exported for the runtime-image verification helpers, which import the Docker gateway
+// entrypoint from this module. The template itself lives in the shared gateway runtime.
+export { GATEWAY_RUNTIME_ENTRYPOINT } from "../runtime/gateway.ts";
 export interface DockerComputeDriverOptions {
   readonly images: {
     readonly gateway: string;

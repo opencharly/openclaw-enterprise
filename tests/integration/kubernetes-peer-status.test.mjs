@@ -10,7 +10,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { reservePort, reservedPortArgs } from "../helpers/available-port.mjs";
 import { waitFor } from "../helpers/wait-for.mjs";
-import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/runtime/program-helpers.ts";
 
 const execute = promisify(execFile);
 

@@ -11,7 +11,7 @@ import {
 import {
   currentComputeAbortSignal,
   withComputeAbortSignal,
-} from "../../apps/controller/src/drivers/compute/operation-context.ts";
+} from "../../apps/controller/src/drivers/compute/runtime/operation-context.ts";
 import { READ_RETRY_PAUSES_MS, withRetryTimers } from "../helpers/kubernetes-request-retry.mjs";
 
 function clone(value) {

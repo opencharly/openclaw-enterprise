@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import test from "node:test";
-import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/runtime/program-helpers.ts";
 
 const controllerRequire = createRequire(
   new URL("../../apps/controller/package.json", import.meta.url),

@@ -64,9 +64,9 @@ fails closed if a required stage or owner is unavailable.
 
 ### 2. Snapshot owners and bind cancellation
 
-`apps/controller/src/drivers/compute/lifecycle-hooks.ts:ComputeLifecycleDispatcher`
+`apps/controller/src/drivers/compute/runtime/lifecycle-hooks.ts:ComputeLifecycleDispatcher`
 
-The [hook dispatcher](../../apps/controller/src/drivers/compute/lifecycle-hooks.ts) snapshots exact
+The [hook dispatcher](../../apps/controller/src/drivers/compute/runtime/lifecycle-hooks.ts) snapshots exact
 Driver capability, identity, and callbacks once during registration. It preserves controller
 selection order for preparation and reverses that order for teardown. Registered callbacks remain
 stable even if their trusted owner changes. Hooks receive the worker's existing claim-owned abort
@@ -90,7 +90,7 @@ owners with `beforeNamespaceDelete` in reverse.
 
 ### 4. Validate launch contributions before starting a workload
 
-`apps/controller/src/drivers/compute/lifecycle-hooks.ts:ComputeLifecycleDispatcher.beforeWorkloadStart`
+`apps/controller/src/drivers/compute/runtime/lifecycle-hooks.ts:ComputeLifecycleDispatcher.beforeWorkloadStart`
 
 Kubernetes `prepareRevision` invokes selected workload hooks for initial embedded gateway creation
 and for dedicated Codex workload preparation. Before a dedicated Codex workload starts, preparation

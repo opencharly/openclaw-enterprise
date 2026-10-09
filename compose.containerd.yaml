@@ -1,0 +1,58 @@
+# Supporting services for a rootless containerd deployment.
+# The project and volume names stay `oce-nerdctl*`: running containers hold the local
+# PostgreSQL state, and recreating them to rename a Compose project would discard it.
+#
+# The controller and the worker run as host processes, not services here: the Compute
+# Driver's startup preflight executes the host helper, and that helper owns the user's
+# rootless containerd socket. Only PostgreSQL is containerised, and the console terminator
+# joins the host network so it can reach a loopback-bound controller.
+#
+# A distinct project name, ports and volumes keep this stack independent of compose.yaml.
+name: oce-nerdctl
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18.6
+    environment:
+      POSTGRES_DB: openclaw_enterprise
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${OCC_NERDCTL_POSTGRES_ADMIN_PASSWORD:-openclaw-local-admin}
+    ports:
+      - "127.0.0.1:${OCC_NERDCTL_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - occ_nerdctl_postgres:/var/lib/postgresql
+      - ./migrations/init-local.sql:/docker-entrypoint-initdb.d/00-occ-roles.sql:ro,Z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d openclaw_enterprise"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build:
+      context: .
+      target: development
+      # The Dockerfile requires an explicit base image, as the development stack supplies.
+      args:
+        NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-docker.io/library/node:24-bookworm}
+    environment:
+      OCC_MIGRATION_DATABASE_URL: postgresql://occ_migrator:occ-migrator-local@postgres:5432/openclaw_enterprise
+    command: ["scripts/migrate-production.mjs"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  console-tls:
+    # Terminates TLS with a locally generated CA and proxies to the host controller, which
+    # serves plain HTTP on loopback. Host networking is what lets it reach that loopback.
+    image: docker.io/library/caddy:2-alpine
+    network_mode: host
+    volumes:
+      - ./deploy/runtime/containerd/Caddyfile:/etc/caddy/Caddyfile:ro,Z
+      - oce_nerdctl_caddy:/data
+      - oce_nerdctl_caddy_config:/config
+
+volumes:
+  occ_nerdctl_postgres:
+  oce_nerdctl_caddy:
+  oce_nerdctl_caddy_config:

@@ -24,9 +24,9 @@ import {
   isPositiveSafeInteger,
   sha256Hex,
 } from "@openclaw-enterprise/utils";
-import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
-import { currentComputeAbortSignal } from "../operation-context.ts";
-import { WORKSPACE_SETUP_RUNTIME } from "../workspace-setup-runtime.ts";
+import { ComputeLifecycleDispatcher } from "../runtime/lifecycle-hooks.ts";
+import { currentComputeAbortSignal } from "../runtime/operation-context.ts";
+import { WORKSPACE_SETUP_RUNTIME } from "../runtime/workspace-setup.ts";
 import { unsupportedNativeGatewayAuthFields } from "../../../gateway/auth-fields.ts";
 import { SystemSshCommandExecutor, type SshCommandExecutor } from "./executor.ts";
 

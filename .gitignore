@@ -6,7 +6,7 @@
 # Dependency trees and generated artifacts remain machine-local at every depth.
 node_modules/
 /bin/occ
-/bin/compute-nerdctl
+/bin/compute-containerd
 target/
 dist/
 .build/
@@ -40,3 +40,7 @@ __pycache__/
 
 # Keep the testing guide visible when a global ignore matches its name.
 !/docs/testing.md
+/bin/openshell-driver-nerdctl
+/bin/openshell-driver-containerd
+/bin/compute-nerdctl
+/bin/compute-containerd

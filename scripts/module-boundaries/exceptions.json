@@ -15,18 +15,6 @@
       "loaderIdentity": "loader:sha256:9f0b666769ffd3208a899fa51d4f057bea855c1b09498b58e7f69b2e9b15dafe"
     },
     {
-      "rule": "cross-provider-implementation",
-      "from": "apps/controller/src/drivers/compute/docker/index.ts",
-      "to": "apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts",
-      "specifier": "../kubernetes/runtime-entrypoints.ts",
-      "kind": "import",
-      "typeOnly": false,
-      "bindings": ["value:AGENT_READINESS_ENTRYPOINT", "value:AGENT_RUNTIME_ENTRYPOINT"],
-      "owner": "Compute runtime helpers",
-      "reason": "Docker currently consumes shared runtime scripts located under the Kubernetes provider.",
-      "removeWhen": "Move shared runtime-entrypoint scripts into the provider-neutral compute runtime module and update both providers."
-    },
-    {
       "rule": "http-to-provider",
       "from": "apps/controller/src/http/errors.ts",
       "to": "apps/controller/src/drivers/configuration/kubernetes/index.ts",

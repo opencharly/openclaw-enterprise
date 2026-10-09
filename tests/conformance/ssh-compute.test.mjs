@@ -27,7 +27,7 @@ import {
   createSshComputeDriver,
 } from "../../apps/controller/src/drivers/compute/ssh/index.ts";
 import { SystemSshCommandExecutor } from "../../apps/controller/src/drivers/compute/ssh/executor.ts";
-import { withComputeAbortSignal } from "../../apps/controller/src/drivers/compute/operation-context.ts";
+import { withComputeAbortSignal } from "../../apps/controller/src/drivers/compute/runtime/operation-context.ts";
 import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { waitFor } from "../helpers/wait-for.mjs";
 

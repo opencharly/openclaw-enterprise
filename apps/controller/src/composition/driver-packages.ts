@@ -11,7 +11,7 @@ import type {
   SandboxDriver,
 } from "@openclaw-enterprise/contracts";
 import type { NativeIAMStateStore } from "@openclaw-enterprise/iam";
-import { currentComputeAbortSignal } from "../drivers/compute/operation-context.ts";
+import { currentComputeAbortSignal } from "../drivers/compute/runtime/operation-context.ts";
 import type { SelectedDriverConfiguration } from "./installation-config.ts";
 
 type ConfigurationRecord = Readonly<Record<string, unknown>>;

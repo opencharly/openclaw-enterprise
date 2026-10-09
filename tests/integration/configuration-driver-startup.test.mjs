@@ -12,7 +12,7 @@ test("configuration-driver-startup selects the filesystem driver for a host-mana
   const configuration = createInstallationDriverConfiguration();
   configuration.drivers.configuration = {
     id: "occ/filesystem-configuration",
-    configuration: { root: "/var/lib/oce-nerdctl/configuration" },
+    configuration: { root: "/var/lib/oce-containerd/configuration" },
   };
   const drivers = await loadInstallationFile(t, configuration);
 
@@ -21,7 +21,7 @@ test("configuration-driver-startup selects the filesystem driver for a host-mana
   assert.equal(drivers.configurationDriver.implementation, "occ/filesystem-configuration");
   assert.equal(
     drivers.installation.drivers.configuration.configuration.root,
-    "/var/lib/oce-nerdctl/configuration",
+    "/var/lib/oce-containerd/configuration",
   );
 
   const pool = new pg.Pool({ connectionString: "postgresql://127.0.0.1:1/occ" });

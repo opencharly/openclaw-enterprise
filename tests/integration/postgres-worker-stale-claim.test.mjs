@@ -253,7 +253,7 @@ test(
     ] = await Promise.all([
       import("pg"),
       import("../../apps/controller/src/worker.ts"),
-      import("../../apps/controller/src/drivers/compute/operation-context.ts"),
+      import("../../apps/controller/src/drivers/compute/runtime/operation-context.ts"),
       import("../helpers/development.mjs"),
       import("../../packages/occ/src/state/postgres-state.ts"),
       import("../../packages/occ/src/state/postgres-work-queue.ts"),

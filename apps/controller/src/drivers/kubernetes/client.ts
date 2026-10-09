@@ -8,7 +8,7 @@ import type {
   ResponseContext,
 } from "@kubernetes/client-node";
 import { Agent, type buildConnector, type Dispatcher, ProxyAgent } from "undici";
-import { currentComputeAbortSignal } from "../compute/operation-context.ts";
+import { currentComputeAbortSignal } from "../compute/runtime/operation-context.ts";
 import type { KubernetesAuthentication } from "./authentication.ts";
 
 type KubernetesSdk = typeof import("@kubernetes/client-node");

@@ -20,13 +20,15 @@ import { inspect } from "node:util";
 import { inflateRawSync } from "node:zlib";
 import test from "node:test";
 import {
-  AGENT_RUNTIME_ENTRYPOINT,
   AGENT_WITH_NODE_ENTRYPOINT,
   GATEWAY_RUNTIME_ENTRYPOINT,
+} from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { AGENT_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/runtime/agent.ts";
+import {
   RUNTIME_WRAPPER_COMMAND,
   SETUP_WRAPPER_COMMAND,
-} from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
-import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/node-program.ts";
+} from "../../apps/controller/src/drivers/compute/runtime/node-program.ts";
+import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/runtime/node-program.ts";
 import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import {
   createKubernetesComputeDriver,
@@ -53,7 +55,7 @@ import {
   currentComputeAbortSignal,
   withComputeAbortSignal,
   withComputeWorkWaiting,
-} from "../../apps/controller/src/drivers/compute/operation-context.ts";
+} from "../../apps/controller/src/drivers/compute/runtime/operation-context.ts";
 import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs";
 import { syntheticCredentialUrl } from "../fixtures/synthetic-credential-url.mjs";
 import {

@@ -129,7 +129,7 @@ release metadata, and configuration resolve later.
 
 ### 3. Deliver requested state through Compute preparation
 
-`apps/controller/src/drivers/compute/plugin-runtime.ts:pluginRuntimeSpecForRevision`
+`apps/controller/src/drivers/compute/runtime/plugin-runtime.ts:pluginRuntimeSpecForRevision`
 
 Compute validates admitted state, Driver, and Harness. Kubernetes projects the
 nonsecret request; Docker uses bounded environment delivery.

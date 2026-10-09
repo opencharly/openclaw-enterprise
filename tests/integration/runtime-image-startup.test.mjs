@@ -20,15 +20,15 @@ import { fileURLToPath } from "node:url";
 import { imageSmokeTimeoutMultiplier } from "../helpers/image-smoke-timeout.mjs";
 import {
   AGENT_WITH_NODE_ENTRYPOINT,
-  AGENT_RUNTIME_ENTRYPOINT,
   CODEX_OAUTH_BOOTSTRAP_ENTRYPOINT,
   GATEWAY_RUNTIME_ENTRYPOINT as KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT,
   GATEWAY_STOP_TIMEOUT_MS,
   NATIVE_WORKER_ENTRYPOINT,
   OPENCLAW_AGENT_DATABASE_SCHEMA_VERSION,
-  PLUGIN_RUNTIME_HELPERS,
 } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
-import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/node-program.ts";
+import { AGENT_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/runtime/agent.ts";
+import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/runtime/program-helpers.ts";
+import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/runtime/node-program.ts";
 import {
   REPOSITORY_MATERIAL_INIT_ENTRYPOINT,
   REPOSITORY_NATIVE_GIT_INIT_ENTRYPOINT,

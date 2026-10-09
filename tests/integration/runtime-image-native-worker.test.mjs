@@ -11,7 +11,7 @@ import test from "node:test";
 import { imageSmokeTimeoutMultiplier } from "../helpers/image-smoke-timeout.mjs";
 import { GATEWAY_RUNTIME_ENTRYPOINT as DOCKER_GATEWAY_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/docker/index.ts";
 import { GATEWAY_RUNTIME_ENTRYPOINT as KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
-import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/node-program.ts";
+import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/runtime/node-program.ts";
 import {
   commandOutput,
   image,
@@ -58,7 +58,7 @@ test(
     const paths = [
       "tests/conformance/workspace-node-supervisor.test.mjs",
       "apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts",
-      "apps/controller/src/drivers/compute/node-program.ts",
+      "../../apps/controller/src/drivers/compute/runtime/node-program.ts",
       "apps/controller/src/drivers/plugin/runtime-translator.ts",
     ];
     const files = await Promise.all(

@@ -17,7 +17,7 @@ import {
   REPOSITORY_MATERIAL_INIT_ENTRYPOINT,
   REPOSITORY_NATIVE_GIT_INIT_ENTRYPOINT,
 } from "./repository-material-init.ts";
-import { SETUP_WRAPPER_COMMAND } from "./runtime-entrypoints.ts";
+import { SETUP_WRAPPER_COMMAND } from "../runtime/node-program.ts";
 
 export const REPOSITORY_MATERIAL_LABEL = "openclaw.dev/repository-material";
 export const REPOSITORY_MATERIAL_GENERATION = "openclaw.dev/repository-material-generation";

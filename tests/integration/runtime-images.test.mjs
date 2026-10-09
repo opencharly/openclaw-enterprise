@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 import { DockerComputeDriver } from "../../apps/controller/src/drivers/compute/docker/index.ts";
-import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/runtime/program-helpers.ts";
 import { sha256Hex } from "../../packages/utils/src/index.ts";
 import {
   isRuntimeImageJob,

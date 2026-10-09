@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import vm from "node:vm";
-import {
-  GATEWAY_RUNTIME_ENTRYPOINT,
-  PLUGIN_RUNTIME_HELPERS,
-} from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { GATEWAY_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/runtime/program-helpers.ts";
 
 const nodeRequire = createRequire(import.meta.url);
 

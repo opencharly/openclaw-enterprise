@@ -30,33 +30,36 @@ formatting helpers.
 
 ## Source ownership
 
-| Path                                                      | Responsibility                                                                                               |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `apps/controller/src/`                                    | HTTP API, console serving, and API/worker entrypoints. `server.mjs` and `worker.mjs` start the processes.    |
-| `apps/controller/src/admission/`                          | Request admission and resource validation at the API boundary.                                               |
-| `apps/controller/src/http/`                               | Resource HTTP handlers and response projection, grouped by platform primitive.                               |
-| `apps/controller/src/auth/`                               | Authentication integrations.                                                                                 |
-| `apps/controller/src/composition/`                        | Runtime assembly and wiring of selected implementations.                                                     |
-| `apps/controller/src/drivers/`                            | Bundled infrastructure Driver implementations, organized by capability.                                      |
-| `apps/controller/src/backends/`                           | Backend implementations.                                                                                     |
-| `apps/controller/src/gateway/`                            | Agent gateway transport and workspace access.                                                                |
-| `apps/controller/src/console/`                            | Browser console modules, styles, and assets.                                                                 |
-| `apps/controller/src/drivers/repo/credentials/`           | Private repository credential contracts, sessions, custody, lifecycle, listeners, and transport.             |
-| `apps/controller/src/drivers/repo/github/credentials/`    | GitHub credential backend, grant policy, authentication, provider transport, and Git/gh clients.             |
-| `apps/controller/src/composition/repository-credentials/` | Protected file loading, key/TLS assembly, configuration checking, and separate service startup.              |
-| `packages/contracts/src/`                                 | Shared resource models, Driver interfaces, and API schemas under `api/`.                                     |
-| `packages/occ/src/`                                       | Platform lifecycle and resource ownership, persistence ports and state implementations, and controller work. |
-| `packages/iam/src/`                                       | Native identity lookup and authorization.                                                                    |
-| `packages/audit/src/`                                     | Audit event construction and sensitive-value sanitization.                                                   |
-| `packages/utils/src/`                                     | Shared, focused utilities used across packages.                                                              |
-| `cmd/occ/`                                                | Go CLI executable entrypoint.                                                                                |
-| `internal/occcli/`                                        | CLI commands and terminal interface.                                                                         |
-| `internal/occclient/`                                     | Go HTTP client for OCC.                                                                                      |
-| `internal/occdev/`                                        | CLI development-stack lifecycle commands.                                                                    |
+| Path                                                      | Responsibility                                                                                                                                                                                   |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/controller/src/`                                    | HTTP API, console serving, and API/worker entrypoints. `server.mjs` and `worker.mjs` start the processes.                                                                                        |
+| `apps/controller/src/admission/`                          | Request admission and resource validation at the API boundary.                                                                                                                                   |
+| `apps/controller/src/http/`                               | Resource HTTP handlers and response projection, grouped by platform primitive.                                                                                                                   |
+| `apps/controller/src/auth/`                               | Authentication integrations.                                                                                                                                                                     |
+| `apps/controller/src/composition/`                        | Runtime assembly and wiring of selected implementations.                                                                                                                                         |
+| `apps/controller/src/drivers/`                            | Bundled infrastructure Driver implementations, organized by capability.                                                                                                                          |
+| `apps/controller/src/drivers/compute/runtime/`            | Provider-neutral compute runtime material every Compute Driver may use: workload programs, the fragments they embed, and shared compute behavior. It must not depend on a Driver implementation. |
+| `apps/controller/src/backends/`                           | Backend implementations.                                                                                                                                                                         |
+| `apps/controller/src/gateway/`                            | Agent gateway transport and workspace access.                                                                                                                                                    |
+| `apps/controller/src/console/`                            | Browser console modules, styles, and assets.                                                                                                                                                     |
+| `apps/controller/src/drivers/repo/credentials/`           | Private repository credential contracts, sessions, custody, lifecycle, listeners, and transport.                                                                                                 |
+| `apps/controller/src/drivers/repo/github/credentials/`    | GitHub credential backend, grant policy, authentication, provider transport, and Git/gh clients.                                                                                                 |
+| `apps/controller/src/composition/repository-credentials/` | Protected file loading, key/TLS assembly, configuration checking, and separate service startup.                                                                                                  |
+| `packages/contracts/src/`                                 | Shared resource models, Driver interfaces, and API schemas under `api/`.                                                                                                                         |
+| `packages/occ/src/`                                       | Platform lifecycle and resource ownership, persistence ports and state implementations, and controller work.                                                                                     |
+| `packages/iam/src/`                                       | Native identity lookup and authorization.                                                                                                                                                        |
+| `packages/audit/src/`                                     | Audit event construction and sensitive-value sanitization.                                                                                                                                       |
+| `packages/utils/src/`                                     | Shared, focused utilities used across packages.                                                                                                                                                  |
+| `cmd/occ/`                                                | Go CLI executable entrypoint.                                                                                                                                                                    |
+| `internal/occcli/`                                        | CLI commands and terminal interface.                                                                                                                                                             |
+| `internal/occclient/`                                     | Go HTTP client for OCC.                                                                                                                                                                          |
+| `internal/occdev/`                                        | CLI development-stack lifecycle commands.                                                                                                                                                        |
 
 Start from the existing primitive that owns a capability. Keep platform core
 behavior dependent on contracts; put implementation-specific behavior in the
-owning Driver or Backend and wire it through composition. See
+owning Driver or Backend and wire it through composition. The bundled Compute
+Drivers are independent of each other: behavior more than one of them needs lives in
+`drivers/compute/runtime/`, and no Driver imports another Driver's module. See
 [platform architecture](design.md) for component interactions, implementation
 status, and remaining design requirements.
 

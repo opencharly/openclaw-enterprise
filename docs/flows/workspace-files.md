@@ -93,7 +93,7 @@ returns `WORKSPACE_SETUP_UNSUPPORTED`. The deployment worker serializes the
 Agent's startup and passes `workspaceSetup` to Compute.
 
 The bundled Drivers deliver inputs to the shared
-`apps/controller/src/drivers/compute/workspace-setup-runtime.ts:WORKSPACE_SETUP_RUNTIME`:
+`apps/controller/src/drivers/compute/runtime/workspace-setup.ts:WORKSPACE_SETUP_RUNTIME`:
 Kubernetes uses an owned Secret and an init container on the workspace owner
 (Gateway when embedded; Harness when dedicated); Docker uses a
 separate setup container and Agent-owned durable volumes; SSH uses the protected

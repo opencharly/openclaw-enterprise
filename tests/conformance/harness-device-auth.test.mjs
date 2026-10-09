@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   pollHarnessDeviceAuthorization,
   startHarnessDeviceAuthorization,
-} from "../../apps/controller/src/drivers/compute/device-auth.ts";
+} from "../../apps/controller/src/drivers/compute/runtime/device-auth.ts";
 
 const issuer = "https://auth.openai.com";
 const clientId = "app_EMoamEEZ73f0CkXaXp7hrann";

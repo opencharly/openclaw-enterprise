@@ -11,7 +11,7 @@ import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { imageSmokeTimeoutMultiplier } from "./image-smoke-timeout.mjs";
 import { GATEWAY_RUNTIME_ENTRYPOINT as DOCKER_GATEWAY_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/docker/index.ts";
-import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/node-program.ts";
+import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/runtime/node-program.ts";
 import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { createHarnessConfiguration } from "./harness-configuration.mjs";
 

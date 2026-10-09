@@ -46,8 +46,8 @@ import {
   OpenShellWorkspaceAlreadyExistsError,
   toProtobufStruct,
 } from "./openshell-gateway-client.ts";
-import { RUNTIME_WRAPPER_COMMAND } from "../compute/kubernetes/runtime-entrypoints.ts";
-import { nodeProgramArguments } from "../compute/node-program.ts";
+import { RUNTIME_WRAPPER_COMMAND } from "../compute/runtime/node-program.ts";
+import { nodeProgramArguments } from "../compute/runtime/node-program.ts";
 
 type ConfigurationRecord = Readonly<Record<string, unknown>>;
 

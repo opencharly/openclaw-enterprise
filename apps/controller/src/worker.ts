@@ -83,7 +83,7 @@ import { resolveApprovedHarness } from "./composition/production-harness.ts";
 import {
   withComputeAbortSignal,
   withComputeWorkWaiting,
-} from "./drivers/compute/operation-context.ts";
+} from "./drivers/compute/runtime/operation-context.ts";
 import type { OccMetrics, WorkKind, WorkOutcome } from "./metrics/index.ts";
 import {
   RepositoryCredentialAuthorityError,

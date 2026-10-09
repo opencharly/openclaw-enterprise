@@ -71,7 +71,7 @@ test(
   { ...requiresPostgres, timeout: 30_000 },
   async (context) => {
     const { computeWorkWaiting } =
-      await import("../../apps/controller/src/drivers/compute/operation-context.ts");
+      await import("../../apps/controller/src/drivers/compute/runtime/operation-context.ts");
     const fixture = await setup(context);
     const first = await fixture.agent("waiting-first", { executionMode: "dedicated" });
     const second = await fixture.agent("waiting-second", { executionMode: "dedicated" });

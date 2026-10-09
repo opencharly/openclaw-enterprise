@@ -1,6 +1,6 @@
 import { defaultAgentModel } from "../../apps/controller/src/console/agents/starter-model.mjs";
-import { RUNTIME_WRAPPER_COMMAND } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
-import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/node-program.ts";
+import { RUNTIME_WRAPPER_COMMAND } from "../../apps/controller/src/drivers/compute/runtime/node-program.ts";
+import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/runtime/node-program.ts";
 import { openShellProviderName } from "../../apps/controller/src/backends/openshell.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";

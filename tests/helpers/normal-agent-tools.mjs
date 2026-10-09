@@ -1,4 +1,4 @@
-import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { PLUGIN_RUNTIME_HELPERS } from "../../apps/controller/src/drivers/compute/runtime/program-helpers.ts";
 
 // A trace may record an interim tool error before that same call completes.
 // Only its latest result, or an exact process-session poll, can prove success.

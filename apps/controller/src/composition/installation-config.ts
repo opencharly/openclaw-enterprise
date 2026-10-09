@@ -48,9 +48,9 @@ import {
   type FilesystemSecretDriverOptions,
 } from "../drivers/secret/filesystem/index.ts";
 import {
-  NerdctlComputeDriver,
-  type NerdctlComputeDriverOptions,
-} from "../drivers/compute/nerdctl/index.ts";
+  ContainerdComputeDriver,
+  type ContainerdComputeDriverOptions,
+} from "../drivers/compute/containerd/index.ts";
 import {
   KubernetesConfigurationDriver,
   type KubernetesConfigurationDriverOptions,
@@ -617,8 +617,9 @@ export async function loadInstallationConfiguration(options: {
     options.packageRoot !== undefined,
   );
   const sshCompute = computePackage === undefined && computeSelection.id === "compute-ssh";
-  const nerdctlCompute = computePackage === undefined && computeSelection.id === "compute-nerdctl";
-  const kubernetesCompute = computePackage === undefined && !sshCompute && !nerdctlCompute;
+  const containerdCompute =
+    computePackage === undefined && computeSelection.id === "compute-containerd";
+  const kubernetesCompute = computePackage === undefined && !sshCompute && !containerdCompute;
   if (repoSelection !== undefined && (!kubernetesCompute || sandboxSelection !== undefined)) {
     throw new Error(
       "drivers.repo requires the bundled Kubernetes Compute Driver without a Sandbox Driver.",
@@ -664,12 +665,12 @@ export async function loadInstallationConfiguration(options: {
     computeSelection,
     "compute",
     computePackage?.implementation ??
-      (sshCompute ? "occ/ssh" : nerdctlCompute ? "occ/nerdctl" : "occ/kubernetes"),
+      (sshCompute ? "occ/ssh" : containerdCompute ? "occ/containerd" : "occ/kubernetes"),
     computePackage?.module ??
       (sshCompute
         ? SshComputeDriver
-        : nerdctlCompute
-          ? NerdctlComputeDriver
+        : containerdCompute
+          ? ContainerdComputeDriver
           : KubernetesComputeDriver),
   );
   // An engine without a cluster Secret API stores values on the host that runs the worker.
@@ -723,7 +724,7 @@ export async function loadInstallationConfiguration(options: {
       `backend[${openShellBackend.id}].drivers.sandbox must match the selected bundled OpenShell drivers.sandbox.id.`,
     );
   }
-  if (nerdctlCompute && sandbox !== undefined) {
+  if (containerdCompute && sandbox !== undefined) {
     // A non-Kubernetes Compute Driver has no object client, so the Sandbox must own its
     // Workspace through the Gateway. Operator mode's Kubernetes resources and readiness would
     // have nowhere to apply, and its Workspace name would be a cluster namespace that no engine
@@ -734,19 +735,19 @@ export async function loadInstallationConfiguration(options: {
     );
     if (sandboxGateway.workspaceMode !== "managed") {
       throw new Error(
-        "drivers.sandbox with compute-nerdctl requires gateway.workspaceMode: managed.",
+        "drivers.sandbox with compute-containerd requires gateway.workspaceMode: managed.",
       );
     }
   }
   if (
-    nerdctlCompute &&
+    containerdCompute &&
     openShellBackend !== undefined &&
     openShellBackend.configuration.endpoint === undefined
   ) {
     // A bare gateway Service resolves as `<name>.<namespace>.svc`, which only a Kubernetes
     // engine can reach; a non-Kubernetes Compute Driver needs the endpoint it dials directly.
     throw new Error(
-      "An openshell backend with compute-nerdctl requires an explicit gateway endpoint.",
+      "An openshell backend with compute-containerd requires an explicit gateway endpoint.",
     );
   }
   if (options.mode === "production" && kubernetesCompute) {
@@ -760,11 +761,11 @@ export async function loadInstallationConfiguration(options: {
       );
     }
   }
-  if (options.mode === "production" && nerdctlCompute) {
-    const nerdctl = compute.configuration as unknown as NerdctlComputeDriverOptions;
+  if (options.mode === "production" && containerdCompute) {
+    const containerd = compute.configuration as unknown as ContainerdComputeDriverOptions;
     // A development profile may run locally built images; production must refuse a tag.
-    if (nerdctl.images.requireImmutableDigest !== true) {
-      throw new Error("Production nerdctl workloads require immutable image digests.");
+    if (containerd.images.requireImmutableDigest !== true) {
+      throw new Error("Production containerd workloads require immutable image digests.");
     }
   }
   const installation = Object.freeze({
@@ -847,9 +848,9 @@ export async function loadInstallationConfiguration(options: {
       compute,
       "compute",
     ) as ComputeDriver;
-  } else if (nerdctlCompute) {
-    computeDriver = new NerdctlComputeDriver(
-      compute.configuration as unknown as NerdctlComputeDriverOptions,
+  } else if (containerdCompute) {
+    computeDriver = new ContainerdComputeDriver(
+      compute.configuration as unknown as ContainerdComputeDriverOptions,
       {
         // The helper owns the rootless engine, so the Driver needs no node enrolment.
         id: compute.id,

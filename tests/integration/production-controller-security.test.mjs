@@ -6,7 +6,7 @@ import { resolveApprovedProductionHarness } from "../../apps/controller/src/comp
 import {
   currentComputeAbortSignal,
   withComputeAbortSignal,
-} from "../../apps/controller/src/drivers/compute/operation-context.ts";
+} from "../../apps/controller/src/drivers/compute/runtime/operation-context.ts";
 import { createFastifyApp } from "../../apps/controller/src/index.ts";
 import { InMemoryAuditSink } from "../../packages/audit/src/index.ts";
 import { NativeIAMDriver } from "../../packages/iam/src/index.ts";

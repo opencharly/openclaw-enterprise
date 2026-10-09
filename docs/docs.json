@@ -300,8 +300,8 @@
                         "label": "Docker and Podman"
                       },
                       {
-                        "page": "reference/drivers/nerdctl-compute",
-                        "label": "Rootless nerdctl"
+                        "page": "reference/drivers/containerd-compute",
+                        "label": "Rootless containerd"
                       }
                     ]
                   },
@@ -810,8 +810,8 @@
                     "label": "Kubernetes"
                   },
                   {
-                    "page": "guides/deploy/local-nerdctl-development",
-                    "label": "nerdctl"
+                    "page": "guides/deploy/local-containerd-development",
+                    "label": "containerd"
                   },
                   {
                     "page": "testing/developer-skills",
@@ -939,7 +939,7 @@
               "flows/service-api-keys",
               "flows/harness-execution-topology",
               "flows/compute-driver-lifecycle-hooks",
-              "flows/nerdctl-compute-delivery",
+              "flows/containerd-compute-delivery",
               "flows/openshell-sandbox-provisioning",
               "flows/credential-source-lifecycle",
               "flows/credential-source-refresh",
@@ -966,7 +966,7 @@
               "testing/docker",
               "testing/ssh",
               "testing/kubernetes",
-              "testing/nerdctl",
+              "testing/containerd",
               "testing/production-network-access",
               "testing/two-cluster-local",
               "testing/gateway-routing",

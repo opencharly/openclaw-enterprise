@@ -7,7 +7,7 @@ import test, { after } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { createOccMetrics } from "../../apps/controller/src/metrics/index.ts";
 import { OpenShellAdmissionLimitError } from "../../apps/controller/src/drivers/sandbox/openshell-gateway-client.ts";
-import { currentComputeAbortSignal } from "../../apps/controller/src/drivers/compute/operation-context.ts";
+import { currentComputeAbortSignal } from "../../apps/controller/src/drivers/compute/runtime/operation-context.ts";
 import {
   ActivationFailedError,
   ActivationPendingError,

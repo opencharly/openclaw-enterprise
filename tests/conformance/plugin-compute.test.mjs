@@ -11,12 +11,12 @@ import {
   KubernetesComputeDriver,
   kubernetesNamespaceName,
 } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
+import { GATEWAY_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import { AGENT_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/runtime/agent.ts";
 import {
-  AGENT_RUNTIME_ENTRYPOINT,
-  GATEWAY_RUNTIME_ENTRYPOINT,
   PLUGIN_RUNTIME_HELPERS,
   startupPhaseHelper,
-} from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+} from "../../apps/controller/src/drivers/compute/runtime/program-helpers.ts";
 import {
   PLUGIN_RUNTIME_CODEX_CONFIG,
   PLUGIN_RUNTIME_CODEX_CONFIG_ENVIRONMENT,
@@ -27,7 +27,7 @@ import {
   pluginRuntimeConfigMapData,
   pluginRuntimeEnvironment,
   pluginRuntimeSpecForRevision,
-} from "../../apps/controller/src/drivers/compute/plugin-runtime.ts";
+} from "../../apps/controller/src/drivers/compute/runtime/plugin-runtime.ts";
 import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { DependencyUnavailableError } from "../../packages/occ/src/errors.ts";
 

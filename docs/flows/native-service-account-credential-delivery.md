@@ -70,7 +70,7 @@ graph TD
 Device login persists actor, exact Namespace/optional Agent scope, provider state,
 and phase in the selected Secret backend; PostgreSQL stores only the Secret
 reference. The selected Compute Driver owns the provider protocol in
-`apps/controller/src/drivers/compute/device-auth.ts:startHarnessDeviceAuthorization`
+`apps/controller/src/drivers/compute/runtime/device-auth.ts:startHarnessDeviceAuthorization`
 and `pollHarnessDeviceAuthorization`. A successful exchange stores a complete
 native bundle; HTTP responses expose only the reference and device instructions.
 
@@ -82,7 +82,7 @@ a ready session can supply plugin discovery through the authorized catalog path;
 the Plugin Driver extracts native access and account metadata.
 
 Before saving, Console can call the selected Compute Driver's
-`apps/controller/src/drivers/compute/model-discovery.ts:discoverHarnessModels`
+`apps/controller/src/drivers/compute/runtime/model-discovery.ts:discoverHarnessModels`
 without storing the credential. OpenAI API-key discovery
 omits models whose valid `shutdown_date` is today or earlier in UTC, per the
 provider's [model-list contract](https://developers.openai.com/api/reference/resources/models/methods/list);

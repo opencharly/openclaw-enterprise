@@ -60,7 +60,7 @@ test("secret-driver-startup selects the filesystem SecretDriver for an engine wi
   const configuration = installation();
   configuration.drivers.secret = {
     id: "occ/filesystem-secret",
-    configuration: { directory: "/var/lib/oce-nerdctl/secrets" },
+    configuration: { directory: "/var/lib/oce-containerd/secrets" },
   };
   const drivers = await loadInstallationFile(t, configuration);
 
@@ -69,7 +69,7 @@ test("secret-driver-startup selects the filesystem SecretDriver for an engine wi
   assert.equal(drivers.secretDriver.implementation, "occ/filesystem-secret");
   assert.equal(
     drivers.installation.drivers.secret.configuration.directory,
-    "/var/lib/oce-nerdctl/secrets",
+    "/var/lib/oce-containerd/secrets",
   );
 
   const pool = new pg.Pool({ connectionString: "postgresql://127.0.0.1:1/occ" });
