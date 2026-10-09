@@ -1,6 +1,9 @@
 import { numericErrorStatus } from "@openclaw-enterprise/utils";
 import { unreachableSocketFailure } from "../compute/kubernetes/index.ts";
-import { currentComputeAbortSignal, withComputeAbortSignal } from "../compute/operation-context.ts";
+import {
+  currentComputeAbortSignal,
+  withComputeAbortSignal,
+} from "../compute/runtime/operation-context.ts";
 
 /** How long one Kubernetes API request may take before its outcome counts as unknown. */
 const KUBERNETES_REQUEST_TIMEOUT_MS = 10_000;

@@ -1,5 +1,5 @@
 ---
-rfc: ../rfcs/0016-sandbox-credential-injection.md
+rfc: ../rfcs/0016-sandbox-credential-injection/index.md
 ---
 
 # Implementation plan: host-engine credential parity
@@ -7,7 +7,7 @@ rfc: ../rfcs/0016-sandbox-credential-injection.md
 - **ID:** TASK-0046
 - **Delivery status:** Planned
 - **Owner:** Driver contracts, Agent deployment, and the rootless container-engine integration.
-- **Authority:** [RFC 0016](../rfcs/0016-sandbox-credential-injection.md) establishes the
+- **Authority:** [RFC 0016](../rfcs/0016-sandbox-credential-injection/index.md) establishes the
   mechanism-agnostic `credential_gateway` capability this plan implements for a second engine;
   [RFC 0017](../rfcs/0017-agent-egress-0x/index.md) owns the Agent egress boundary the injection
   point stands on.

@@ -159,7 +159,7 @@ import {
   GATEWAY_STOP_TIMEOUT_MS,
   NATIVE_WORKER_ENTRYPOINT,
 } from "./runtime-entrypoints.ts";
-import { AGENT_READINESS_ENTRYPOINT, AGENT_RUNTIME_ENTRYPOINT } from "../runtime/agent.ts";
+import { AGENT_RUNTIME_ENTRYPOINT } from "../runtime/agent.ts";
 import { RUNTIME_WRAPPER_COMMAND, SETUP_WRAPPER_COMMAND } from "../runtime/node-program.ts";
 import { RUNTIME_READINESS_PATH } from "../runtime/program-helpers.ts";
 
