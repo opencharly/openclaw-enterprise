@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import test from "node:test";
@@ -238,6 +239,11 @@ function namespaceContext(name = "oce-123456789012345") {
     kubernetes: {},
     signal: new AbortController().signal,
   };
+}
+
+/** The Workspace a managed OpenShell Gateway owns for one OCC Namespace: `oce-<15 hex>`. */
+function managedWorkspaceName(namespaceId) {
+  return `oce-${createHash("sha256").update(namespaceId).digest("hex").slice(0, 15)}`;
 }
 
 function codexRequirements(revision, environment = []) {
@@ -1719,8 +1725,7 @@ test("OpenShell operator mode owns workspace chart resources around the Workspac
   ]);
 });
 
-test("OpenShell managed mode fails before mutating Kubernetes or the Gateway", async () => {
-  const events = [];
+test("OpenShell managed mode refuses operator Kubernetes options before any mutation", () => {
   const configuration = sandboxInstallation().drivers.sandbox.configuration;
   configuration.gateway.workspaceMode = "managed";
   configuration.gateway.operatorWorkspaceResources = [
@@ -1731,20 +1736,55 @@ test("OpenShell managed mode fails before mutating Kubernetes or the Gateway", a
     },
   ];
   const gatewayClient = workspaceGatewayClient();
+  // A managed Workspace never applies operator resources, so an Installation that names them is
+  // refused before the Driver can reach either the Gateway or a Kubernetes object.
+  assert.throws(
+    () =>
+      new OpenShellSandboxDriver(configuration, {
+        id: "openshell-sandbox",
+        implementation: "openshell",
+        backend: backendFor(gatewayClient),
+      }),
+    /managed workspace mode does not apply operator Kubernetes resources/,
+  );
+  assert.deepEqual(gatewayClient.calls, []);
+});
+
+test("OpenShell managed mode owns its Workspace without a Kubernetes object client", async () => {
+  const configuration = sandboxInstallation().drivers.sandbox.configuration;
+  configuration.gateway.workspaceMode = "managed";
+  const gatewayClient = workspaceGatewayClient();
   const driver = new OpenShellSandboxDriver(configuration, {
     id: "openshell-sandbox",
     implementation: "openshell",
     backend: backendFor(gatewayClient),
   });
+  // The context carries no KubernetesObjectApi at all: a managed Workspace is named and owned
+  // through the Gateway alone, so every call below must succeed without one.
   const context = namespaceContext();
-  context.kubernetes = kubernetesObjectClient(events);
+  const workspace = managedWorkspaceName(context.namespace.id);
 
-  await assert.rejects(
-    driver.ensureNamespace(context),
-    /managed workspace mode is not implemented; cannot ensure a Namespace/,
-  );
-  assert.deepEqual(events, []);
-  assert.deepEqual(gatewayClient.calls, []);
+  await driver.ensureNamespace(context);
+  assert.ok(workspace.length <= 19, "the managed Workspace name must fit OpenShell's limit");
+  assert.deepEqual(gatewayClient.calls, [
+    ["health"],
+    ["getWorkspace", workspace],
+    [
+      "createWorkspace",
+      workspace,
+      {
+        "app.kubernetes.io/managed-by": "openclaw-enterprise",
+        "openclaw.dev/namespace-id": context.namespace.id,
+      },
+    ],
+  ]);
+
+  gatewayClient.calls.length = 0;
+  await driver.cleanup(context);
+  assert.deepEqual(gatewayClient.calls, [
+    ["getWorkspace", workspace],
+    ["deleteWorkspace", workspace],
+  ]);
 });
 
 test("OpenShell Namespace cleanup refuses a same-name foreign Workspace", async () => {
@@ -2459,13 +2499,16 @@ test("OpenShell observes the Codex Harness through its exact bearer-passthrough 
     }),
     /only for dedicated Codex revisions/,
   );
-  // Another Sandbox Driver's revision, or a deferred managed Workspace, is refused before the
-  // Harness is observed.
+  // Another Sandbox Driver's revision is refused before the Harness is observed.
   observed.length = 0;
   await assert.rejects(
     driver.harnessStatus({ ...statusContext, revision: { ...revision, sandboxDriverId: "other" } }),
     /another Sandbox Driver/,
   );
+  // The same exactness holds when the Gateway owns its Workspace: managed mode reaches the
+  // exact service through the Gateway alone, with no Kubernetes object client involved.
+  observed.length = 0;
+  handshake = true;
   const managedConfiguration = sandboxInstallation().drivers.sandbox.configuration;
   managedConfiguration.gateway.workspaceMode = "managed";
   const managed = new OpenShellSandboxDriver(managedConfiguration, {
@@ -2473,11 +2516,11 @@ test("OpenShell observes the Codex Harness through its exact bearer-passthrough 
     implementation: "openshell",
     backend: backendFor(gatewayClient),
   });
-  await assert.rejects(
-    managed.harnessStatus(statusContext),
-    /managed workspace mode is not implemented; cannot observe a Harness/,
-  );
-  assert.deepEqual(observed, []);
+  assert.deepEqual(await managed.harnessStatus(statusContext), { state: "serving" });
+  assert.deepEqual(observed, [
+    ["getService", sandboxName, ""],
+    ["serviceWebSocketHandshake", "http://codex.example.test:9443/", "transport-token"],
+  ]);
 });
 
 test("OpenShell startup admits exactly the endpoints both consumers can parse and dial", async (t) => {

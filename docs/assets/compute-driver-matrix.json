@@ -19,6 +19,28 @@
       ]
     }
   ],
+  "deviations": [
+    {
+      "driver": "nerdctl",
+      "row": "sandbox",
+      "reason": "The OCE-side delegation exists but cannot run: the OpenShell compute driver does not implement the isolation boundary the real supervisor requires, so CreateSandbox fails closed and no Sandbox starts on this engine."
+    },
+    {
+      "driver": "nerdctl",
+      "row": "workload-identity",
+      "reason": "Requires a credential gateway, which the platform admits only with a paired Sandbox Driver (worker.ts:893, kubernetes/index.ts:2745) \u2014 the deviation this column already records for `sandbox`."
+    },
+    {
+      "driver": "nerdctl",
+      "row": "account-credential",
+      "reason": "Requires a credential gateway, which the platform admits only with a paired Sandbox Driver (worker.ts:893, kubernetes/index.ts:2745) \u2014 the deviation this column already records for `sandbox`."
+    },
+    {
+      "driver": "nerdctl",
+      "row": "custom-secrets",
+      "reason": "Requires a credential gateway, which the platform admits only with a paired Sandbox Driver (worker.ts:893, kubernetes/index.ts:2745) \u2014 the deviation this column already records for `sandbox`."
+    }
+  ],
   "proof": {
     "source": "inspected at exact baseline",
     "tests": "existing test evidence only; no tests executed by this audit",
@@ -96,6 +118,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Production selection refuses a mutable image tag and requires the rootless engine to answer its preflight.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/composition/installation-config.ts",
+              "start": 735,
+              "end": 741
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/schema.ts",
+              "start": 33,
+              "end": 35
+            }
+          ]
         }
       }
     },
@@ -158,6 +196,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Creates the Agent's internal and edge CNI networks inside the configured containerd namespace; both carry ownership labels.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 179,
+              "end": 191
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 255,
+              "end": 267
+            }
+          ]
         }
       }
     },
@@ -226,6 +280,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Removes only containers, volumes and networks that carry this Driver's labels, and fails closed on a foreign resource.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 298,
+              "end": 306
+            },
+            {
+              "path": "helpers/compute-nerdctl/internal/engine/engine.go",
+              "start": 132,
+              "end": 140
+            }
+          ]
         }
       }
     },
@@ -299,6 +369,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Creates the Agent's storage, hands it to the workload user and starts the gateway container from the pinned image.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 361,
+              "end": 364
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 857,
+              "end": 869
+            }
+          ]
         }
       }
     },
@@ -392,6 +478,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Activation and deactivation are distinct stages: the runtime is restarted on activation and stopped on deactivation.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 488,
+              "end": 497
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 518,
+              "end": 526
+            }
+          ]
         }
       },
       "requirementDetail": "Optional methods in the shared interface; production startup rejects a selected ComputeDriver without both activation stages."
@@ -478,6 +580,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Stops exactly the revision's gateway container and keeps its storage for a later activation.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 528,
+              "end": 537
+            },
+            {
+              "path": "helpers/compute-nerdctl/internal/engine/engine.go",
+              "start": 382,
+              "end": 390
+            }
+          ]
         }
       }
     },
@@ -557,6 +675,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Removes the predecessor's containers while the replacement keeps serving; storage is released separately.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 574,
+              "end": 583
+            },
+            {
+              "path": "tests/conformance/nerdctl-compute.test.mjs",
+              "start": 1051,
+              "end": 1082
+            }
+          ]
         }
       }
     },
@@ -619,6 +753,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Runs the shared gateway runtime, which execs the embedded OpenClaw harness, inside the Agent's own network.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 367,
+              "end": 381
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/gateway-configuration.ts",
+              "start": 18,
+              "end": 20
+            }
+          ]
         }
       }
     },
@@ -682,6 +832,27 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "A dedicated Codex harness runs as its own revision-scoped container beside its Agent's gateway, with its own token and readiness probe; the gateway reaches it by name on the Agent's plane.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 989,
+              "end": 1000
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 198,
+              "end": 202
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 419,
+              "end": 426
+            }
+          ]
         }
       }
     },
@@ -756,6 +927,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "A prepared revision waits while the serving gateway keeps running; the runtime is replaced only on activation.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 1435,
+              "end": 1441
+            },
+            {
+              "path": "tests/conformance/nerdctl-compute.test.mjs",
+              "start": 685,
+              "end": 719
+            }
+          ]
         }
       }
     },
@@ -828,6 +1015,17 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "unsupported",
+          "detail": "Replacement still needs a stop and start of the container process; there is no second engine to serve during the swap.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 528,
+              "end": 535
+            }
+          ]
         }
       }
     },
@@ -902,6 +1100,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "An existing network plane or volume is adopted only when its ownership labels match, and its stored labels are verified.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 872,
+              "end": 879
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 1640,
+              "end": 1652
+            }
+          ]
         }
       }
     },
@@ -981,6 +1195,36 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "partial",
+          "detail": "The OCE wiring exists: composition admits the pairing and the Driver delegates a dedicated Harness to the paired SandboxDriver with exact identity and workload requirements, then points the gateway at the provider endpoint. No Sandbox can be started on this engine today - the isolation boundary the real OpenShell supervisor requires is not implemented, so CreateSandbox fails closed - and the path is unproven against a live Gateway.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 1223,
+              "end": 1315
+            },
+            {
+              "path": "apps/controller/src/composition/installation-config.ts",
+              "start": 698,
+              "end": 712
+            }
+          ],
+          "tests": [
+            {
+              "path": "tests/conformance/nerdctl-compute.test.mjs",
+              "start": 1524,
+              "end": 1779
+            },
+            {
+              "path": "tests/integration/nerdctl-compute-startup.test.mjs",
+              "start": 119,
+              "end": 164
+            }
+          ],
+          "testExecution": "node --test tests/conformance/nerdctl-compute.test.mjs tests/integration/nerdctl-compute-startup.test.mjs (54 and 5 pass)",
+          "liveProof": "not run in this change"
         }
       }
     },
@@ -1090,6 +1334,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Selected lifecycle Drivers run before and after the workload starts, and a failing hook prevents the runtime from starting.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 396,
+              "end": 406
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 222,
+              "end": 227
+            }
+          ]
         }
       }
     },
@@ -1174,6 +1434,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "The gateway runtime installs the admitted native plugin runtime before it execs the harness.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/gateway-runtime.ts",
+              "start": 39,
+              "end": 41
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 400,
+              "end": 404
+            }
+          ]
         }
       }
     },
@@ -1251,6 +1527,32 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Each Namespace owns an internal and an edge CNI network, both kernel-enforced: the internal plane reaches nothing outside. An Installation that names an egress proxy gets the enforced topology - the proxy stands on both planes as the workloads' only route out, the workloads keep no egress of their own, and a relay on both planes publishes the gateway's port, which the no-egress plane cannot do itself. Without a proxy the workloads keep the edge plane and their egress is ungated.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 1668,
+              "end": 1681
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 1615,
+              "end": 1638
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 142,
+              "end": 144
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 279,
+              "end": 301
+            }
+          ]
         }
       }
     },
@@ -1319,6 +1621,27 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Explicit CPU quota and memory limits are applied to every container, and a delivery is admitted only when the Namespace's recorded limits leave room for it. The engine has no ResourceQuota object, so the tenant budget is an admission decision; requests are scheduler reservations and are carried unused.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 1501,
+              "end": 1516
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 128,
+              "end": 138
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/quantity.ts",
+              "start": 30,
+              "end": 32
+            }
+          ]
         }
       }
     },
@@ -1397,6 +1720,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Workloads run as the image's unprivileged user with no-new-privileges, and storage is handed to that user.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 207,
+              "end": 220
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 939,
+              "end": 947
+            }
+          ]
         }
       }
     },
@@ -1459,6 +1798,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Read-only root filesystem, every capability dropped, and a bounded tmpfs for scratch space.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 66,
+              "end": 86
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 78,
+              "end": 82
+            }
+          ]
         }
       }
     },
@@ -1532,6 +1887,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "partial",
+          "detail": "Runtime credential files are written for the workload and their status can be read; provisioning an identity token is not implemented yet (TODO(P9)). It waits on the same missing piece as `sandbox`: a credential gateway needs a paired Sandbox Driver, which the platform enforces.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 779,
+              "end": 796
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 337,
+              "end": 341
+            }
+          ]
         }
       }
     },
@@ -1605,6 +1976,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "The published loopback port is read back from the running container and resolved to a private ws:// endpoint.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 814,
+              "end": 818
+            },
+            {
+              "path": "tests/conformance/nerdctl-compute.test.mjs",
+              "start": 720,
+              "end": 747
+            }
+          ]
         }
       }
     },
@@ -1694,6 +2081,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Named engine volumes hold Agent state across container replacement and are released only when the Agent is removed.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 88,
+              "end": 98
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 819,
+              "end": 826
+            }
+          ]
         }
       }
     },
@@ -1756,6 +2159,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "The dedicated harness shares the Agent's workspace volume with its gateway through the same mount set.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 221,
+              "end": 223
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/spec.ts",
+              "start": 235,
+              "end": 237
+            }
+          ]
         }
       }
     },
@@ -1824,6 +2243,27 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Creates the Agent's owned gateway credential when it is missing, preserves the value it finds, refuses a file this Driver did not write, and removes it with the Agent.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/credentials.ts",
+              "start": 123,
+              "end": 134
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/credentials.ts",
+              "start": 41,
+              "end": 45
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 801,
+              "end": 812
+            }
+          ]
         }
       }
     },
@@ -1907,6 +2347,27 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "The workload environment reaches the harness container alone; the gateway receives the transport endpoint and token instead, so a model credential never lands in the process that serves clients.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 356,
+              "end": 360
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 1071,
+              "end": 1076
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 1000,
+              "end": 1014
+            }
+          ]
         }
       }
     },
@@ -1990,6 +2451,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "unsupported",
+          "detail": "The Driver does not consume the revision context's Secret projections and has no handle on the platform's Secret store, which the Docker and SSH Drivers do not either; a lifecycle owner contributes only opaque placeholders. It waits on the same missing piece as `sandbox`: a credential gateway needs a paired Sandbox Driver, which the platform enforces.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/lifecycle-hooks.ts",
+              "start": 23,
+              "end": 25
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 333,
+              "end": 335
+            }
+          ]
         }
       }
     },
@@ -2058,6 +2535,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "unsupported",
+          "detail": "A Backend-issued Codex account token and its workspace identity are not delivered; the harness receives whatever the workload environment carries, which the platform limits to opaque placeholders. It waits on the same missing piece as `sandbox`: a credential gateway needs a paired Sandbox Driver, which the platform enforces.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 336,
+              "end": 342
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/lifecycle-hooks.ts",
+              "start": 24,
+              "end": 26
+            }
+          ]
         }
       }
     },
@@ -2136,6 +2629,27 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "One transport token is generated on first provisioning, persisted as an Agent-owned credential file and presented by both roles, so a replacement keeps the authenticated channel its peer holds.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/credentials.ts",
+              "start": 115,
+              "end": 117
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/credentials.ts",
+              "start": 26,
+              "end": 28
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 1009,
+              "end": 1014
+            }
+          ]
         }
       }
     },
@@ -2221,6 +2735,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Native trusted-proxy gateway authentication is honoured, with a managed password as the default.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/gateway-configuration.ts",
+              "start": 13,
+              "end": 15
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/gateway-configuration.ts",
+              "start": 8,
+              "end": 10
+            }
+          ]
         }
       }
     },
@@ -2293,6 +2823,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "unsupported",
+          "detail": "Periodic active-runtime maintenance is not scheduled by this Driver.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 152,
+              "end": 178
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 222,
+              "end": 232
+            }
+          ]
         }
       }
     },
@@ -2375,6 +2921,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "Container logs are read back from the engine with bounded output and exact ownership checks.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+              "start": 694,
+              "end": 712
+            },
+            {
+              "path": "tests/conformance/nerdctl-compute.test.mjs",
+              "start": 1268,
+              "end": 1329
+            }
+          ]
         }
       }
     },
@@ -2448,6 +3010,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "nerdctl": {
+          "status": "supported",
+          "detail": "A production Installation must pin an immutable digest; a tag is refused at composition and by the configuration schema.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/nerdctl/schema.ts",
+              "start": 33,
+              "end": 35
+            },
+            {
+              "path": "apps/controller/src/composition/installation-config.ts",
+              "start": 735,
+              "end": 741
+            }
+          ]
         }
       }
     }
@@ -2480,6 +3058,13 @@
       "start": 92,
       "end": 113,
       "description": "Explicit host/systemd/runtime prerequisites; tests real SSH lifecycle; not run by this audit."
+    },
+    {
+      "driver": "nerdctl",
+      "path": "tests/integration/nerdctl-compute-real.test.mjs",
+      "start": 60,
+      "end": 65,
+      "description": "Opt-in rootless real-runtime delivery test (OCC_TEST_NERDCTL_REAL=1) that drives the real helper against this host's containerd; conformance with an injected executor lives in tests/conformance/nerdctl-compute.test.mjs."
     }
   ],
   "reviewedAt": "2026-09-16",
@@ -2555,6 +3140,29 @@
           "path": "apps/controller/src/composition/installation-config.ts",
           "start": 573,
           "end": 578
+        }
+      ]
+    },
+    {
+      "id": "nerdctl",
+      "name": "Rootless nerdctl",
+      "scope": "Bundled rootless containerd/nerdctl engines; development via Installation YAML, production with immutable digests",
+      "implementation": "occ/nerdctl",
+      "evidence": [
+        {
+          "path": "apps/controller/src/composition/installation-config.ts",
+          "start": 592,
+          "end": 594
+        },
+        {
+          "path": "apps/controller/src/drivers/compute/nerdctl/index.ts",
+          "start": 113,
+          "end": 115
+        },
+        {
+          "path": "helpers/compute-nerdctl/main.go",
+          "start": 150,
+          "end": 152
         }
       ]
     }

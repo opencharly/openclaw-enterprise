@@ -284,6 +284,8 @@ jobs:
         run: pnpm openapi:check
       - name: Check and build documentation
         run: pnpm docs:install && pnpm docs:check && pnpm docs:build
+      - name: Check Compute Driver capability parity
+        run: pnpm parity:compute --check
 
   affected-packages:
     name: Affected Packages (advisory)

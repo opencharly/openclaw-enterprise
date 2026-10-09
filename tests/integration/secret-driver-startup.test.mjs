@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { FilesystemSecretDriver } from "../../apps/controller/src/drivers/secret/filesystem/index.ts";
 import { KubernetesSecretDriver } from "../../apps/controller/src/drivers/secret/kubernetes/index.ts";
 import { createControllerWorker } from "../../apps/controller/src/worker.ts";
 import { createInstallationDriverConfiguration as installation } from "../helpers/installation-driver-configuration.mjs";
@@ -52,5 +53,39 @@ test("secret-driver-startup requires one bundled SecretDriver selection and vali
   await assert.rejects(
     loadInstallationFile(t, invalid),
     /Dedicated kubeconfig path must be absolute/,
+  );
+});
+
+test("secret-driver-startup selects the filesystem SecretDriver for an engine without a cluster Secret API", async (t) => {
+  const configuration = installation();
+  configuration.drivers.secret = {
+    id: "occ/filesystem-secret",
+    configuration: { directory: "/var/lib/oce-nerdctl/secrets" },
+  };
+  const drivers = await loadInstallationFile(t, configuration);
+
+  assert.ok(drivers.secretDriver instanceof FilesystemSecretDriver);
+  assert.equal(drivers.secretDriver.capability, "secret");
+  assert.equal(drivers.secretDriver.implementation, "occ/filesystem-secret");
+  assert.equal(
+    drivers.installation.drivers.secret.configuration.directory,
+    "/var/lib/oce-nerdctl/secrets",
+  );
+
+  const pool = new pg.Pool({ connectionString: "postgresql://127.0.0.1:1/occ" });
+  t.after(async () => pool.end());
+  assert.doesNotThrow(() =>
+    createControllerWorker({ pool, mode: "production", drivers, emit: () => {} }),
+  );
+
+  // A relative directory would resolve against the worker's working directory.
+  const invalid = installation();
+  invalid.drivers.secret = {
+    id: "occ/filesystem-secret",
+    configuration: { directory: "secrets" },
+  };
+  await assert.rejects(
+    loadInstallationFile(t, invalid),
+    /drivers\.secret\.configuration does not match its Driver configuration schema/,
   );
 });

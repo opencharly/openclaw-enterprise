@@ -144,12 +144,13 @@ intervals must be positive safe integers. Development sets `startupDelayMs` to
 30 seconds because v0.1.3-pre.2 exposes its service before the process listens.
 
 Install the OpenShell gateway separately. Required `gateway.workspaceMode`
-accepts `operator` or `managed`; deferred managed mode fails before Kubernetes
-mutations or Gateway calls. Configure the Gateway's Kubernetes driver with `workspaceMode: operator` and a namespace selector
+accepts `operator` or `managed`. Configure the Gateway's Kubernetes driver with `workspaceMode: operator` and a namespace selector
 matching `operatorNamespaceLabels`. In this mode the OpenShell Workspace name
 must equal its pre-provisioned Kubernetes namespace, so OCC uses a stable
 `oce-` name with a 15-character digest to stay within OpenShell v0.1.3-pre.2's
-19-character Workspace limit.
+19-character Workspace limit. `managed` is for a Gateway that owns its
+Workspaces and refuses the operator options below; `operator` keeps every
+Kubernetes behaviour below.
 
 The Kubernetes development profile acts as the operator for its disposable
 cluster. With Kubernetes Compute, `OCC_DEVELOPMENT_SANDBOX_DRIVER=openshell`

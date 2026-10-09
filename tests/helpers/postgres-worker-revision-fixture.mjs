@@ -112,6 +112,7 @@ export function createWorkerRevisionFixtures(testFile) {
       metrics,
       repoDriver,
       secretAuthMethod = "api_key",
+      computeDriver,
     } = {},
   ) {
     const [
@@ -170,7 +171,10 @@ export function createWorkerRevisionFixtures(testFile) {
       ),
     );
     await state.transact((unit) => unit.namespaces.createNamespace(namespace));
-    const compute = {
+    // A test may bring its own Compute Driver: the revision is stamped with this object's
+    // identity, so injecting one exercises that Driver through the real worker, state and work
+    // queue instead of the development double.
+    const compute = computeDriver ?? {
       ...createDevelopmentComputeDriver(),
       ...(repoDriver === undefined
         ? {}

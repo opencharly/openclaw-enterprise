@@ -21,11 +21,7 @@
       "specifier": "../kubernetes/runtime-entrypoints.ts",
       "kind": "import",
       "typeOnly": false,
-      "bindings": [
-        "value:AGENT_READINESS_ENTRYPOINT",
-        "value:AGENT_RUNTIME_ENTRYPOINT",
-        "value:PLUGIN_RUNTIME_HELPERS"
-      ],
+      "bindings": ["value:AGENT_READINESS_ENTRYPOINT", "value:AGENT_RUNTIME_ENTRYPOINT"],
       "owner": "Compute runtime helpers",
       "reason": "Docker currently consumes shared runtime scripts located under the Kubernetes provider.",
       "removeWhen": "Move shared runtime-entrypoint scripts into the provider-neutral compute runtime module and update both providers."

@@ -1,0 +1,11 @@
+# The controller runs on the host and serves plain HTTP on loopback; this terminator adds
+# TLS for the browser console with a CA generated on first start. The root certificate is
+# written to <caddy data volume>/caddy/pki/authorities/local/root.crt.
+{
+	local_certs
+}
+
+# A loopback address is required: a development controller refuses a non-loopback origin.
+https://127.0.0.1:9443 {
+	reverse_proxy 127.0.0.1:3100
+}

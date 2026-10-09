@@ -921,7 +921,7 @@ for (const [method, action] of [
 test("Filesystem Configuration API rejects plaintext model writes without changing stored references", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "occ-model-configuration-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
+  const configurationDriver = new FilesystemConfigurationDriver({ root });
   const context = await fixture({ configurationDriver });
   const namespace = await bootstrapAndCreateNamespace(context);
   const collection = `/namespaces/${namespace.id}/configurations`;

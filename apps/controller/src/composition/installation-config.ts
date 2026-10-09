@@ -39,6 +39,19 @@ import {
 import { createExternalDriver, loadDriverPackage } from "./driver-packages.ts";
 import { SshComputeDriver, type SshComputeDriverOptions } from "../drivers/compute/ssh/index.ts";
 import {
+  FILESYSTEM_CONFIGURATION_ID,
+  FilesystemConfigurationDriver,
+  type FilesystemConfigurationDriverOptions,
+} from "../drivers/configuration/filesystem/index.ts";
+import {
+  FilesystemSecretDriver,
+  type FilesystemSecretDriverOptions,
+} from "../drivers/secret/filesystem/index.ts";
+import {
+  NerdctlComputeDriver,
+  type NerdctlComputeDriverOptions,
+} from "../drivers/compute/nerdctl/index.ts";
+import {
   KubernetesConfigurationDriver,
   type KubernetesConfigurationDriverOptions,
 } from "../drivers/configuration/kubernetes/index.ts";
@@ -604,7 +617,8 @@ export async function loadInstallationConfiguration(options: {
     options.packageRoot !== undefined,
   );
   const sshCompute = computePackage === undefined && computeSelection.id === "compute-ssh";
-  const kubernetesCompute = computePackage === undefined && !sshCompute;
+  const nerdctlCompute = computePackage === undefined && computeSelection.id === "compute-nerdctl";
+  const kubernetesCompute = computePackage === undefined && !sshCompute && !nerdctlCompute;
   if (repoSelection !== undefined && (!kubernetesCompute || sandboxSelection !== undefined)) {
     throw new Error(
       "drivers.repo requires the bundled Kubernetes Compute Driver without a Sandbox Driver.",
@@ -629,11 +643,16 @@ export async function loadInstallationConfiguration(options: {
       ? await loadBundledOpenShellSandboxDriver()
       : undefined;
 
+  // An engine without a cluster ConfigMap API stores documents on the worker host.
+  const filesystemConfiguration =
+    configurationSelection.id === FILESYSTEM_CONFIGURATION_ID && configurationPackage === undefined;
   const configured = selected(
     configurationSelection,
     "configuration",
-    configurationPackage?.implementation ?? "occ/kubernetes-configmap",
-    configurationPackage?.module ?? KubernetesConfigurationDriver,
+    configurationPackage?.implementation ??
+      (filesystemConfiguration ? "occ/filesystem-configuration" : "occ/kubernetes-configmap"),
+    configurationPackage?.module ??
+      (filesystemConfiguration ? FilesystemConfigurationDriver : KubernetesConfigurationDriver),
   );
   const iam = selected(
     iamSelection,
@@ -644,14 +663,23 @@ export async function loadInstallationConfiguration(options: {
   const compute = selected(
     computeSelection,
     "compute",
-    computePackage?.implementation ?? (sshCompute ? "occ/ssh" : "occ/kubernetes"),
-    computePackage?.module ?? (sshCompute ? SshComputeDriver : KubernetesComputeDriver),
+    computePackage?.implementation ??
+      (sshCompute ? "occ/ssh" : nerdctlCompute ? "occ/nerdctl" : "occ/kubernetes"),
+    computePackage?.module ??
+      (sshCompute
+        ? SshComputeDriver
+        : nerdctlCompute
+          ? NerdctlComputeDriver
+          : KubernetesComputeDriver),
   );
+  // An engine without a cluster Secret API stores values on the host that runs the worker.
+  const filesystemSecret =
+    secretSelection.id === "occ/filesystem-secret" && secretSelection.package === undefined;
   const secret = selected(
     secretSelection,
     "secret",
-    "occ/kubernetes-secret",
-    KubernetesSecretDriver,
+    filesystemSecret ? "occ/filesystem-secret" : "occ/kubernetes-secret",
+    filesystemSecret ? FilesystemSecretDriver : KubernetesSecretDriver,
   );
   if (repoSelection !== undefined) {
     const kubernetes = compute.configuration as unknown as KubernetesComputeDriverOptions;
@@ -673,6 +701,13 @@ export async function loadInstallationConfiguration(options: {
   if (sandbox !== undefined && computePackage !== undefined) {
     throw new Error("drivers.sandbox requires the bundled Kubernetes Compute Driver.");
   }
+  // Only the bundled OpenShell Sandbox Driver is independent of a Kubernetes object client;
+  // an external Sandbox package is a Kubernetes Gateway and cannot pair with another engine.
+  if (sandbox !== undefined && !kubernetesCompute && sandboxPackage !== undefined) {
+    throw new Error(
+      "drivers.sandbox requires the bundled OpenShell Sandbox Driver with a non-Kubernetes Compute Driver.",
+    );
+  }
   if (sandbox !== undefined && sandboxPackage === undefined && openShellBackend === undefined) {
     throw new Error(
       "The bundled OpenShell drivers.sandbox requires a backend entry with type openshell.",
@@ -688,8 +723,31 @@ export async function loadInstallationConfiguration(options: {
       `backend[${openShellBackend.id}].drivers.sandbox must match the selected bundled OpenShell drivers.sandbox.id.`,
     );
   }
-  if (credentialGateway !== undefined && !kubernetesCompute) {
-    throw new Error("drivers.credential_gateway requires the bundled Kubernetes Compute Driver.");
+  if (nerdctlCompute && sandbox !== undefined) {
+    // A non-Kubernetes Compute Driver has no object client, so the Sandbox must own its
+    // Workspace through the Gateway. Operator mode's Kubernetes resources and readiness would
+    // have nowhere to apply, and its Workspace name would be a cluster namespace that no engine
+    // here provisions.
+    const sandboxGateway = object(
+      (sandbox.configuration as ConfigurationRecord).gateway,
+      "drivers.sandbox.configuration.gateway",
+    );
+    if (sandboxGateway.workspaceMode !== "managed") {
+      throw new Error(
+        "drivers.sandbox with compute-nerdctl requires gateway.workspaceMode: managed.",
+      );
+    }
+  }
+  if (
+    nerdctlCompute &&
+    openShellBackend !== undefined &&
+    openShellBackend.configuration.endpoint === undefined
+  ) {
+    // A bare gateway Service resolves as `<name>.<namespace>.svc`, which only a Kubernetes
+    // engine can reach; a non-Kubernetes Compute Driver needs the endpoint it dials directly.
+    throw new Error(
+      "An openshell backend with compute-nerdctl requires an explicit gateway endpoint.",
+    );
   }
   if (options.mode === "production" && kubernetesCompute) {
     const kubernetes = compute.configuration as unknown as KubernetesComputeDriverOptions;
@@ -700,6 +758,13 @@ export async function loadInstallationConfiguration(options: {
       throw new Error(
         "Production Kubernetes workloads require the explicitly configured Codex runtime.",
       );
+    }
+  }
+  if (options.mode === "production" && nerdctlCompute) {
+    const nerdctl = compute.configuration as unknown as NerdctlComputeDriverOptions;
+    // A development profile may run locally built images; production must refuse a tag.
+    if (nerdctl.images.requireImmutableDigest !== true) {
+      throw new Error("Production nerdctl workloads require immutable image digests.");
     }
   }
   const installation = Object.freeze({
@@ -723,16 +788,21 @@ export async function loadInstallationConfiguration(options: {
     }),
   });
   const configurationDriver =
-    configurationPackage === undefined
-      ? new KubernetesConfigurationDriver(
-          configured.configuration as unknown as KubernetesConfigurationDriverOptions,
-          { id: configured.id, implementation: configured.implementation },
-        )
-      : (createExternalDriver(
+    configurationPackage !== undefined
+      ? (createExternalDriver(
           configurationPackage.module,
           configured,
           "configuration",
-        ) as ConfigurationDriver);
+        ) as ConfigurationDriver)
+      : filesystemConfiguration
+        ? new FilesystemConfigurationDriver(
+            configured.configuration as unknown as FilesystemConfigurationDriverOptions,
+            { id: configured.id, implementation: configured.implementation },
+          )
+        : new KubernetesConfigurationDriver(
+            configured.configuration as unknown as KubernetesConfigurationDriverOptions,
+            { id: configured.id, implementation: configured.implementation },
+          );
   // One gateway object serves both member Drivers, so they share clients and naming.
   const openShell =
     openShellBackend === undefined
@@ -777,6 +847,29 @@ export async function loadInstallationConfiguration(options: {
       compute,
       "compute",
     ) as ComputeDriver;
+  } else if (nerdctlCompute) {
+    computeDriver = new NerdctlComputeDriver(
+      compute.configuration as unknown as NerdctlComputeDriverOptions,
+      {
+        // The helper owns the rootless engine, so the Driver needs no node enrolment.
+        id: compute.id,
+        implementation: compute.implementation,
+        lifecycleDrivers: [configurationDriver],
+        ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
+        ...(credentialGatewayDriver === undefined ? {} : { credentialGatewayDriver }),
+        // A staged Codex OAuth login lives in the selected Secret Driver's store, exactly as it
+        // lives in the cluster Secret API for the Kubernetes Compute Driver. Inject the store
+        // that Driver already owns instead of making the operator name the same path twice.
+        ...(filesystemSecret
+          ? {
+              secretStore: {
+                directory: (secret.configuration as unknown as FilesystemSecretDriverOptions)
+                  .directory,
+              },
+            }
+          : {}),
+      },
+    );
   } else if (sshCompute) {
     computeDriver = new SshComputeDriver(
       compute.configuration as unknown as SshComputeDriverOptions,
@@ -822,10 +915,15 @@ export async function loadInstallationConfiguration(options: {
       },
     );
   }
-  const secretDriver = new KubernetesSecretDriver(
-    secret.configuration as unknown as KubernetesSecretDriverOptions,
-    { id: secret.id, implementation: secret.implementation },
-  );
+  const secretDriver = filesystemSecret
+    ? new FilesystemSecretDriver(secret.configuration as unknown as FilesystemSecretDriverOptions, {
+        id: secret.id,
+        implementation: secret.implementation,
+      })
+    : new KubernetesSecretDriver(secret.configuration as unknown as KubernetesSecretDriverOptions, {
+        id: secret.id,
+        implementation: secret.implementation,
+      });
   const createIAMDriver = (state: NativeIAMStateStore): IAMDriver => {
     return iamPackage === undefined
       ? new NativeIAMDriver(state, { id: iam.id, implementation: iam.implementation })
