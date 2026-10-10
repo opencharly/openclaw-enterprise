@@ -79,7 +79,11 @@
     "tests/conformance/slack-configuration.test.mjs",
     "tests/conformance/grafana-overview-dashboard.test.mjs",
     "tests/conformance/split-layout-tenants.test.mjs",
-    "tests/conformance/split-layout-adopt.test.mjs"
+    "tests/conformance/split-layout-adopt.test.mjs",
+    "tests/conformance/containerd-compute.test.mjs",
+    "tests/conformance/filesystem-secret-driver.test.mjs",
+    "tests/integration/configuration-driver-startup.test.mjs",
+    "tests/integration/containerd-compute-startup.test.mjs"
   ],
   "files": [
     {
@@ -329,6 +333,18 @@
     },
     {
       "path": "tests/conformance/split-layout-adopt.test.mjs"
+    },
+    {
+      "path": "tests/conformance/containerd-compute.test.mjs"
+    },
+    {
+      "path": "tests/conformance/filesystem-secret-driver.test.mjs"
+    },
+    {
+      "path": "tests/integration/configuration-driver-startup.test.mjs"
+    },
+    {
+      "path": "tests/integration/containerd-compute-startup.test.mjs"
     }
   ]
 }
