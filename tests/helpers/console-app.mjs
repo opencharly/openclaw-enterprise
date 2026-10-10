@@ -284,7 +284,7 @@ export async function createConsoleAppFixture(t, options = {}) {
     // real storage Driver; the in-memory test Driver accepts any values.
     const root = await mkdtemp(join(tmpdir(), "occ-console-configuration-"));
     t.after(() => rm(root, { recursive: true, force: true }));
-    configurationDriver = new FilesystemConfigurationDriver(root);
+    configurationDriver = new FilesystemConfigurationDriver({ root });
   }
   let controller;
   const appOptions = {

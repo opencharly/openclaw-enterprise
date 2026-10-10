@@ -112,6 +112,11 @@ export function createWorkerRevisionFixtures(testFile) {
       metrics,
       repoDriver,
       secretAuthMethod = "api_key",
+      computeDriver,
+      // A Driver that reads its login from the selected Secret Driver's store (the rootless
+      // containerd Driver's OAuth path) needs that exact Driver composed for the worker and for
+      // the Agent's Secret rows, not the fixture's in-memory double.
+      secretDriver: providedSecretDriver,
     } = {},
   ) {
     const [
@@ -170,7 +175,10 @@ export function createWorkerRevisionFixtures(testFile) {
       ),
     );
     await state.transact((unit) => unit.namespaces.createNamespace(namespace));
-    const compute = {
+    // A test may bring its own Compute Driver: the revision is stamped with this object's
+    // identity, so injecting one exercises that Driver through the real worker, state and work
+    // queue instead of the development double.
+    const compute = computeDriver ?? {
       ...createDevelopmentComputeDriver(),
       ...(repoDriver === undefined
         ? {}
@@ -181,7 +189,8 @@ export function createWorkerRevisionFixtures(testFile) {
             },
           }),
     };
-    const secretDriver = createBackendWorkerDrivers(compute, []).secretDriver;
+    const secretDriver =
+      providedSecretDriver ?? createBackendWorkerDrivers(compute, []).secretDriver;
     const controller = createBackendController({ installation, state }, { backends: [] });
     controller.registerDriver(secretDriver);
     controller.selectDriver("secret", secretDriver.id);
@@ -205,7 +214,12 @@ export function createWorkerRevisionFixtures(testFile) {
         backendId = null,
         grantHarnessSecret = true,
         auth = "secret",
+        // The staged value of the Harness Secret an api_key Agent authenticates with. A real
+        // provider-key lane passes the operator's credential; a synthetic stage keeps the default.
+        secretValue = "worker-fixture-key",
         nonModelSources = 0,
+        oauthSession,
+        oauthSecretId,
       } = {},
     ) {
       const id = `agt_${randomUUID()}`;
@@ -251,13 +265,46 @@ export function createWorkerRevisionFixtures(testFile) {
           await unit.credentialSources.markCredentialSourceReady(namespace.id, source.id);
         });
         harnessAuth = { method: "credential_source", sourceId: source.id };
+      } else if (auth === "oauth") {
+        // The platform stages the Codex device login as a Secret in the selected Secret Driver
+        // and hands the revision only its reference. Reusing an existing Secret reproduces the
+        // second Agent that tries to claim a login somebody already consumed.
+        let stored;
+        if (oauthSecretId !== undefined) {
+          stored = await state.read((view) => view.secrets.findSecret(namespace.id, oauthSecretId));
+          assert.ok(stored, `the staged login Secret ${oauthSecretId} must still exist`);
+        } else {
+          assert.ok(
+            typeof oauthSession === "string",
+            "an oauth Agent needs the staged device-login session the platform stored",
+          );
+          const identity = {
+            id: `sec_${randomUUID()}`,
+            namespaceId: namespace.id,
+            name: `Device login ${randomUUID()}`,
+          };
+          const backendRef = await secretDriver.create(identity, oauthSession);
+          stored = {
+            ...identity,
+            driverId: secretDriver.id,
+            backendRef,
+            createdAt: new Date().toISOString(),
+          };
+          await state.transact((unit) => unit.secrets.createSecret(stored));
+        }
+        harnessAuth = {
+          method: "oauth",
+          // No private delivery metadata: the public binding grammar admits exactly the source
+          // reference, and the revision carries the Secret Driver id separately.
+          source: { kind: "secret", namespaceId: namespace.id, id: stored.id },
+        };
       } else if (serviceAccountId === undefined) {
         const identity = {
           id: `sec_${randomUUID()}`,
           namespaceId: namespace.id,
           name: `key-${randomUUID()}`,
         };
-        const backendRef = await secretDriver.create(identity, "worker-fixture-key");
+        const backendRef = await secretDriver.create(identity, secretValue);
         await state.transact((unit) =>
           unit.secrets.createSecret({
             ...identity,
@@ -332,7 +379,11 @@ export function createWorkerRevisionFixtures(testFile) {
         }
       }
       if (
-        (harnessAuth.method === "api_key" || harnessAuth.method === "codex_pat") &&
+        (harnessAuth.method === "api_key" ||
+          harnessAuth.method === "codex_pat" ||
+          // A staged OAuth login is the Agent's own Harness Secret just as an API key is: the
+          // Agent must be authorized to operate it, or the worker refuses the delivery.
+          harnessAuth.method === "oauth") &&
         harnessAuth.source.kind === "secret" &&
         grantHarnessSecret
       ) {
@@ -355,7 +406,7 @@ export function createWorkerRevisionFixtures(testFile) {
     async function revision(
       owner,
       number,
-      { harness, repositoryCredentials, actorId = actor.id, plugins } = {},
+      { harness, repositoryCredentials, actorId = actor.id, plugins, configuration } = {},
     ) {
       let harnessAuth;
       if (owner.harnessAuth.method === "runtime") {
@@ -407,7 +458,7 @@ export function createWorkerRevisionFixtures(testFile) {
         agentId: owner.id,
         revision: number,
         backendId: owner.backendId,
-        configuration: { revision: String(number) },
+        configuration: configuration ?? { revision: String(number) },
         configurationId: owner.configurationId,
         configurationKind: "agent",
         configurationGeneration: 1,
@@ -487,7 +538,11 @@ export function createWorkerRevisionFixtures(testFile) {
         transformDrivers = (drivers) => drivers,
       } = {},
     ) {
-      const configuredDrivers = createBackendWorkerDrivers(computeDriver, providers ?? []);
+      // The Installation the worker validates against must name the same Secret Driver the test
+      // composed, or construction fails before the delivery ever runs.
+      const configuredDrivers = createBackendWorkerDrivers(computeDriver, providers ?? [], {
+        secretDriver,
+      });
       const drivers = transformDrivers({
         ...configuredDrivers,
         secretDriver,
