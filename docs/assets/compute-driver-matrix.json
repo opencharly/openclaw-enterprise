@@ -19,6 +19,23 @@
       ]
     }
   ],
+  "deviations": [
+    {
+      "driver": "containerd",
+      "row": "workload-identity",
+      "reason": "Provisioning a service-principal workload token is not implemented; the Driver owns only its Agent runtime credential files, and this engine has no credential-gateway pairing to delegate to."
+    },
+    {
+      "driver": "containerd",
+      "row": "custom-secrets",
+      "reason": "General Secret projections are not delivered on this engine; the Driver reads the selected Secret Driver's store only for the credentials it delivers itself."
+    },
+    {
+      "driver": "containerd",
+      "row": "account-credential",
+      "reason": "A Backend-issued Codex account token is refused at admission; this Driver admits only runtime credentials, a staged Codex OAuth login or a provider key for a dedicated Codex Harness."
+    }
+  ],
   "proof": {
     "source": "inspected at exact baseline",
     "tests": "existing test evidence only; no tests executed by this audit",
@@ -96,6 +113,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Production selection refuses a mutable image tag and requires the rootless engine to answer its preflight.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/composition/installation-config.ts",
+              "start": 735,
+              "end": 741
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/schema.ts",
+              "start": 33,
+              "end": 35
+            }
+          ]
         }
       }
     },
@@ -158,6 +191,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Creates the Agent's internal and edge CNI networks inside the configured containerd namespace; both carry ownership labels.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 179,
+              "end": 191
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 255,
+              "end": 267
+            }
+          ]
         }
       }
     },
@@ -226,6 +275,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Removes only containers, volumes and networks that carry this Driver's labels, and fails closed on a foreign resource.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 298,
+              "end": 306
+            },
+            {
+              "path": "helpers/compute-containerd/internal/engine/engine.go",
+              "start": 132,
+              "end": 140
+            }
+          ]
         }
       }
     },
@@ -299,6 +364,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Creates the Agent's storage, hands it to the workload user and starts the gateway container from the pinned image.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 361,
+              "end": 364
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 857,
+              "end": 869
+            }
+          ]
         }
       }
     },
@@ -392,6 +473,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Activation and deactivation are distinct stages: the runtime is restarted on activation and stopped on deactivation.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 488,
+              "end": 497
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 518,
+              "end": 526
+            }
+          ]
         }
       },
       "requirementDetail": "Optional methods in the shared interface; production startup rejects a selected ComputeDriver without both activation stages."
@@ -478,6 +575,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Stops exactly the revision's gateway container and keeps its storage for a later activation.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 528,
+              "end": 537
+            },
+            {
+              "path": "helpers/compute-containerd/internal/engine/engine.go",
+              "start": 382,
+              "end": 390
+            }
+          ]
         }
       }
     },
@@ -557,6 +670,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Removes the predecessor's containers while the replacement keeps serving; storage is released separately.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 574,
+              "end": 583
+            },
+            {
+              "path": "tests/conformance/containerd-compute.test.mjs",
+              "start": 1051,
+              "end": 1082
+            }
+          ]
         }
       }
     },
@@ -619,6 +748,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Runs the shared gateway runtime, which execs the embedded OpenClaw harness, inside the Agent's own network.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 367,
+              "end": 381
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/gateway-configuration.ts",
+              "start": 18,
+              "end": 20
+            }
+          ]
         }
       }
     },
@@ -682,6 +827,27 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "A dedicated Codex harness runs as its own revision-scoped container beside its Agent's gateway, with its own token and readiness probe; the gateway reaches it by name on the Agent's plane.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 989,
+              "end": 1000
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 198,
+              "end": 202
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 419,
+              "end": 426
+            }
+          ]
         }
       }
     },
@@ -756,6 +922,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "A prepared revision waits while the serving gateway keeps running; the runtime is replaced only on activation.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 1435,
+              "end": 1441
+            },
+            {
+              "path": "tests/conformance/containerd-compute.test.mjs",
+              "start": 685,
+              "end": 719
+            }
+          ]
         }
       }
     },
@@ -828,6 +1010,17 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "unsupported",
+          "detail": "Replacement still needs a stop and start of the container process; there is no second engine to serve during the swap.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 528,
+              "end": 535
+            }
+          ]
         }
       }
     },
@@ -902,6 +1095,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "An existing network plane or volume is adopted only when its ownership labels match, and its stored labels are verified.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 872,
+              "end": 879
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 1640,
+              "end": 1652
+            }
+          ]
         }
       }
     },
@@ -981,6 +1190,31 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "unsupported",
+          "detail": "Rejects a paired Sandbox Driver: this engine has no Sandbox placement, so the dedicated Codex Harness runs as the Driver's own revision-scoped container and composition refuses the pairing.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/composition/installation-config.ts",
+              "start": 600,
+              "end": 604
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 1265,
+              "end": 1274
+            }
+          ],
+          "tests": [
+            {
+              "path": "tests/integration/containerd-compute-startup.test.mjs",
+              "start": 119,
+              "end": 125
+            }
+          ],
+          "testExecution": "node --test tests/integration/containerd-compute-startup.test.mjs (not run in this change)",
+          "liveProof": "not run in this change"
         }
       }
     },
@@ -1090,6 +1324,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Selected lifecycle Drivers run before and after the workload starts, and a failing hook prevents the runtime from starting.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 396,
+              "end": 406
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 222,
+              "end": 227
+            }
+          ]
         }
       }
     },
@@ -1174,6 +1424,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "The gateway runtime installs the admitted native plugin runtime before it execs the harness.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/gateway-runtime.ts",
+              "start": 39,
+              "end": 41
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 400,
+              "end": 404
+            }
+          ]
         }
       }
     },
@@ -1251,6 +1517,32 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Each Namespace owns an internal and an edge CNI network, both kernel-enforced: the internal plane reaches nothing outside. An Installation that names an egress proxy gets the enforced topology - the proxy stands on both planes as the workloads' only route out, the workloads keep no egress of their own, and a relay on both planes publishes the gateway's port, which the no-egress plane cannot do itself. Without a proxy the workloads keep the edge plane and their egress is ungated.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 1668,
+              "end": 1681
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 1615,
+              "end": 1638
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 142,
+              "end": 144
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 279,
+              "end": 301
+            }
+          ]
         }
       }
     },
@@ -1319,6 +1611,27 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Explicit CPU quota and memory limits are applied to every container, and a delivery is admitted only when the Namespace's recorded limits leave room for it. The engine has no ResourceQuota object, so the tenant budget is an admission decision; requests are scheduler reservations and are carried unused.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 1501,
+              "end": 1516
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 128,
+              "end": 138
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/quantity.ts",
+              "start": 30,
+              "end": 32
+            }
+          ]
         }
       }
     },
@@ -1397,6 +1710,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Workloads run as the image's unprivileged user with no-new-privileges, and storage is handed to that user.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 207,
+              "end": 220
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 939,
+              "end": 947
+            }
+          ]
         }
       }
     },
@@ -1459,6 +1788,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Read-only root filesystem, every capability dropped, and a bounded tmpfs for scratch space.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 66,
+              "end": 86
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 78,
+              "end": 82
+            }
+          ]
         }
       }
     },
@@ -1532,6 +1877,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "partial",
+          "detail": "Runtime credential files are written for the workload and their status can be read; provisioning a service-principal workload token is not implemented by this Driver.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 779,
+              "end": 796
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 337,
+              "end": 341
+            }
+          ]
         }
       }
     },
@@ -1605,6 +1966,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "The published loopback port is read back from the running container and resolved to a private ws:// endpoint.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 814,
+              "end": 818
+            },
+            {
+              "path": "tests/conformance/containerd-compute.test.mjs",
+              "start": 720,
+              "end": 747
+            }
+          ]
         }
       }
     },
@@ -1694,6 +2071,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Named engine volumes hold Agent state across container replacement and are released only when the Agent is removed.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 88,
+              "end": 98
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 819,
+              "end": 826
+            }
+          ]
         }
       }
     },
@@ -1756,6 +2149,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "The dedicated harness shares the Agent's workspace volume with its gateway through the same mount set.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 221,
+              "end": 223
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/spec.ts",
+              "start": 235,
+              "end": 237
+            }
+          ]
         }
       }
     },
@@ -1824,6 +2233,27 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Creates the Agent's owned gateway credential when it is missing, preserves the value it finds, refuses a file this Driver did not write, and removes it with the Agent.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/credentials.ts",
+              "start": 123,
+              "end": 134
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/credentials.ts",
+              "start": 41,
+              "end": 45
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 801,
+              "end": 812
+            }
+          ]
         }
       }
     },
@@ -1907,6 +2337,41 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "The workload environment reaches the harness container alone; the gateway receives the transport endpoint and token instead, so a model credential never lands in the process that serves clients. A staged provider key for a dedicated Codex harness is delivered to that container as OPENAI_API_KEY and to nothing else; a staged OAuth login reaches its Codex home through a read-only seed.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 356,
+              "end": 360
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 1071,
+              "end": 1076
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 1000,
+              "end": 1014
+            }
+          ],
+          "tests": [
+            {
+              "path": "tests/conformance/containerd-compute.test.mjs",
+              "start": 2098,
+              "end": 2160
+            },
+            {
+              "path": "tests/integration/containerd-compute-workflow.test.mjs",
+              "start": 805,
+              "end": 900
+            }
+          ],
+          "testExecution": "node --test tests/conformance/containerd-compute.test.mjs and the opt-in real engine lane (OCC_TEST_CONTAINERD_REAL=1 with OPENAI_API_KEY)",
+          "liveProof": "real model turn on the host's rootless containerd with an authorized provider key"
         }
       }
     },
@@ -1990,6 +2455,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "unsupported",
+          "detail": "The Driver reads the selected Secret Driver's store only for the credentials it delivers itself: a staged Codex OAuth login and, for a dedicated Codex Harness, its provider key. General OCC Secret projections are not delivered, which the Docker and SSH Drivers do not deliver either; a lifecycle owner contributes only opaque placeholders.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/lifecycle-hooks.ts",
+              "start": 23,
+              "end": 25
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 333,
+              "end": 335
+            }
+          ]
         }
       }
     },
@@ -2058,6 +2539,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "unsupported",
+          "detail": "A Backend-issued Codex account token and its workspace identity are not delivered: this Driver admits only operator-managed runtime credentials for an embedded OpenClaw gateway, and a staged Codex OAuth login or provider key for a dedicated Codex Harness. The harness otherwise receives whatever the workload environment carries, which the platform limits to opaque placeholders.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 336,
+              "end": 342
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/lifecycle-hooks.ts",
+              "start": 24,
+              "end": 26
+            }
+          ]
         }
       }
     },
@@ -2136,6 +2633,27 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "One transport token is generated on first provisioning, persisted as an Agent-owned credential file and presented by both roles, so a replacement keeps the authenticated channel its peer holds.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/credentials.ts",
+              "start": 115,
+              "end": 117
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/credentials.ts",
+              "start": 26,
+              "end": 28
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 1009,
+              "end": 1014
+            }
+          ]
         }
       }
     },
@@ -2221,6 +2739,22 @@
           ],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Native trusted-proxy gateway authentication is honoured, with a managed password as the default.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/gateway-configuration.ts",
+              "start": 13,
+              "end": 15
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/gateway-configuration.ts",
+              "start": 8,
+              "end": 10
+            }
+          ]
         }
       }
     },
@@ -2293,6 +2827,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "unsupported",
+          "detail": "Periodic active-runtime maintenance is not scheduled by this Driver.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 152,
+              "end": 178
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 222,
+              "end": 232
+            }
+          ]
         }
       }
     },
@@ -2375,6 +2925,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "Container logs are read back from the engine with bounded output and exact ownership checks.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+              "start": 694,
+              "end": 712
+            },
+            {
+              "path": "tests/conformance/containerd-compute.test.mjs",
+              "start": 1268,
+              "end": 1329
+            }
+          ]
         }
       }
     },
@@ -2448,6 +3014,22 @@
           "tests": [],
           "testExecution": "not run in this audit",
           "liveProof": "not run in this audit"
+        },
+        "containerd": {
+          "status": "supported",
+          "detail": "A production Installation must pin an immutable digest; a tag is refused at composition and by the configuration schema.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/compute/containerd/schema.ts",
+              "start": 33,
+              "end": 35
+            },
+            {
+              "path": "apps/controller/src/composition/installation-config.ts",
+              "start": 735,
+              "end": 741
+            }
+          ]
         }
       }
     }
@@ -2480,6 +3062,13 @@
       "start": 92,
       "end": 113,
       "description": "Explicit host/systemd/runtime prerequisites; tests real SSH lifecycle; not run by this audit."
+    },
+    {
+      "driver": "containerd",
+      "path": "tests/integration/containerd-compute-real.test.mjs",
+      "start": 60,
+      "end": 65,
+      "description": "Opt-in rootless real-runtime delivery test (OCC_TEST_CONTAINERD_REAL=1) that drives the real helper against this host's containerd; conformance with an injected executor lives in tests/conformance/containerd-compute.test.mjs."
     }
   ],
   "reviewedAt": "2026-09-16",
@@ -2555,6 +3144,29 @@
           "path": "apps/controller/src/composition/installation-config.ts",
           "start": 573,
           "end": 578
+        }
+      ]
+    },
+    {
+      "id": "containerd",
+      "name": "Rootless containerd",
+      "scope": "Bundled rootless containerd engine; development via Installation YAML, production with immutable digests",
+      "implementation": "occ/containerd",
+      "evidence": [
+        {
+          "path": "apps/controller/src/composition/installation-config.ts",
+          "start": 592,
+          "end": 594
+        },
+        {
+          "path": "apps/controller/src/drivers/compute/containerd/index.ts",
+          "start": 113,
+          "end": 115
+        },
+        {
+          "path": "helpers/compute-containerd/main.go",
+          "start": 150,
+          "end": 152
         }
       ]
     }
