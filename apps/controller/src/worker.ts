@@ -3431,7 +3431,14 @@ export class ControllerWorker {
         // that is converging under load comes back (D28).
         result = { outcome: "pending", code: error.code, dependencyFailure: error };
       } else {
-        result = { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
+        // A Compute Driver may know that retrying cannot help - a spent staged credential, a
+        // refused identity - and says so through its reviewed classification. Retrying a
+        // permanent cause only burns the attempt budget and hides the operator's fix.
+        const diagnostic = this.compute.describePrepareRevisionFailure?.(error);
+        result =
+          validComputeFailureDiagnostic(diagnostic) && diagnostic.permanent === true
+            ? { outcome: "permanent", code: diagnostic.code }
+            : { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
       }
       failureLogFields = revisionFailureLogFields(error);
     }
