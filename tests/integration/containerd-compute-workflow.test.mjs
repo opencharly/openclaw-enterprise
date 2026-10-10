@@ -825,9 +825,20 @@ if (REAL_ENGINE && REAL_MODEL !== undefined && REAL_PROVIDER_KEY !== undefined) 
         revision: {
           configuration: {
             // The shared Codex runtime logs in with this provider's key and probes the exact model
-            // the configuration selects.
+            // the configuration selects. The runtime is declared explicitly, as the platform's own
+            // standard-codex preset does and as the HTTP validation requires for a provider model:
+            // a model that could run on either harness must name the one it runs on.
             agents: {
-              defaults: { model: `openai/${REAL_MODEL}`, workspace: "/home/node/workspace" },
+              defaults: {
+                model: `codex/${REAL_MODEL}`,
+                models: { [`codex/${REAL_MODEL}`]: { agentRuntime: { id: "codex" } } },
+                workspace: "/home/node/workspace",
+              },
+            },
+            models: {
+              providers: {
+                codex: { api: "openai-responses", baseUrl: "https://api.openai.com/v1" },
+              },
             },
             gateway: { mode: "local", bind: "lan" },
           },

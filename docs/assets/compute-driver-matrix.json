@@ -1879,8 +1879,8 @@
           "liveProof": "not run in this audit"
         },
         "containerd": {
-          "status": "partial",
-          "detail": "Runtime credential files are written for the workload and their status can be read; provisioning a service-principal workload token is not implemented by this Driver.",
+          "status": "unsupported",
+          "detail": "This engine has no service-account issuer, so the Driver projects no workload token and does not fabricate one. Kubernetes projects a bounded, audience-scoped ServiceAccount token from its cluster issuer; reaching that here needs an issuer this engine does not have.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/compute/containerd/index.ts",
@@ -2371,7 +2371,7 @@
             }
           ],
           "testExecution": "node --test tests/conformance/containerd-compute.test.mjs and the opt-in real engine lane (OCC_TEST_CONTAINERD_REAL=1 with OPENAI_API_KEY)",
-          "liveProof": "real model turn on the host's rootless containerd with an authorized provider key"
+          "liveProof": "real model turn on the host's rootless containerd with an authorized provider key, and a dedicated Codex harness on the same engine authenticated by a staged ChatGPT OAuth login: codex-login ok, model probe READY, native-spawn ok, with the Codex home mounted only in the harness container and no credential environment in the gateway"
         }
       }
     },

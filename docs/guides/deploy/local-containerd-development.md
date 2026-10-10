@@ -74,21 +74,36 @@ the same namespace, ports and database:
 | `--gateway-image`, `--agent-image`, `--egress-proxy-image` | `local/oce-*:dev`               | runtime images                                       |
 | `--egress on\|off`                                         | `off`                           | Agent egress: the allowlisted proxy, or open egress  |
 
-Generated credentials and the bootstrap administrator are written to the state directory, not to
-the repository:
+## Credentials and what they survive
 
-```text
-state/stack.env                                  stack credentials, mode 0600
-state/bootstrap/initial-admin-service-key.json   service key for API calls, mode 0600
-state/bootstrap/initial-admin-password.txt       administrator password, mode 0600
-state/installation.yaml                          the Installation document, mode 0600
-state/controller.log, state/worker.log           process logs
-```
+Every credential lives in one canonical store, `~/.config/oce-containerd/` (directory `0700`, files
+`0600`), outside the checkout and outside any stack's state directory:
 
-Expected output ends with a summary naming the console at `http://127.0.0.1:3100/console` and the
-service key path. Open the console there: a development controller requires a loopback auth base
-URL and accepts a plain HTTP loopback origin, so no TLS terminator is needed. An operator who
-needs HTTPS terminates TLS in front of the controller with whatever their environment provides.
+| Path               | What it is for                                                                             | What it survives                                                                                                                      |
+| ------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `platform.env`     | `OCC_AUTH_SECRET` and the PostgreSQL administrator password, plus this stack's coordinates | every teardown including `--purge`; live sessions and service keys derive from the auth secret, so it is reused and never regenerated |
+| `codex-oauth.json` | the operator's own ChatGPT login for a dedicated Codex harness                             | every teardown; an OAuth deployment stays automatable without another device login                                                    |
+| `openai.key`       | the model provider key for a provider-key harness                                          | every teardown                                                                                                                        |
+| `credentials/`     | the per-Namespace gateway credentials the Driver writes                                    | while the Agent exists; recreated with it                                                                                             |
+| `secrets/`         | the filesystem Secret Driver's store                                                       | while staged Secrets are referenced; a consumed OAuth login becomes a marker                                                          |
+| `service-key.json` | a canonical copy of a platform service key for API automation                              | written once and never overwritten; the authoritative copy stays in that stack's state directory                                      |
+
+The stack's state directory (`~/.local/state/oce-containerd/`, `0700`) holds only what a run
+produces: `installation.yaml`, `namespaces`, `api-port`, pid files, logs, and `bootstrap/` with that
+stack's service key and administrator password. `scripts/containerd-up` creates the store when it is
+missing and reads it on every later run, so a bring-up needs no credential flag, no prompt and no
+second set of credentials.
+
+`scripts/containerd-down` stops the controller, the worker and PostgreSQL, and keeps the engine
+volume, the state directory and the store: the next `scripts/containerd-up` resumes the same
+database and the same platform state without bootstrapping again. `scripts/containerd-down --purge`
+additionally destroys the engine volume, the state directory and the platform containers of the
+Namespaces that stack owns. It never touches `~/.config/oce-containerd/`, so a purge cannot take the
+OAuth bundle or the platform credentials with it: only `rm` does that, deliberately.
+
+Per-Agent gateway and app-server tokens are generated per Agent and deliberately not reused; they
+live in the Driver's `credentials/` and `secrets/` stores for that Agent's lifetime rather than in
+the canonical store.
 
 ## Deploy a dedicated Codex Agent
 
@@ -99,10 +114,12 @@ Secret, creates the configuration and the Agent, grants the Agent's own service 
 `secret:operate` on that Secret, and requests the first deployment:
 
 ```bash
-node scripts/containerd-agent.mjs \
-  --provider-key-file "$HOME/.config/oce-containerd/openai.key" \
-  --agent-name codex-agent
+node scripts/containerd-agent.mjs --oauth --agent-name codex-agent
 ```
+
+Every credential comes from the store: `--oauth` stages the stored ChatGPT bundle as the harness
+credential, `--auth api_key` uses the stored provider key, and the service key is the one the stack
+was bootstrapped with. No credential flag is required, and nothing is prompted for.
 
 `--model` selects the Codex model name and defaults to `gpt-5.6-luna`; `--state` points at a stack
 started with a non-default state directory. The provider key file is read by the script and never
@@ -150,10 +167,12 @@ scripts/containerd-down --purge    # also removes the engine volume, the stack s
                                    # Agent containers and volumes this stack created
 ```
 
-Without `--purge` the engine volume and the state directory survive, so the next
-`scripts/containerd-up` resumes the same platform state. `--purge` removes the platform containers
-and per-Agent volumes of the Namespaces this stack owns, and never touches containers belonging
-to another installation.
+Without `--purge` the engine volume, the state directory and the credential store survive, so the
+next `scripts/containerd-up` resumes the same platform state with no bootstrap and no new
+credentials. `--purge` destroys the database, the state directory and the platform containers and
+per-Agent volumes of the Namespaces this stack owns; it never touches containers belonging to
+another installation, and it never touches `~/.config/oce-containerd/`. `scripts/containerd-restart`
+restarts only the controller and the worker, again with every credential read from the store.
 
 ## Limits
 

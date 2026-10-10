@@ -417,16 +417,23 @@ test("ensureNamespace prepares both planes and never leaks a created network", a
   const result = await driverWith(executor).ensureNamespace(NAMESPACE);
   assert.equal(result.namespaceReady, true);
   assert.equal(result.namespaceId, "ns_1");
-  assert.deepEqual(executor.operations(), ["ensure-network", "ensure-network"]);
+  // Namespace preparation also reads back the ports of containers this Namespace already has — the
+  // gateway port cache is process-local and a restarted worker must still answer for a serving
+  // Agent — so the plane assertions scope to the network operations they describe.
+  assert.deepEqual(
+    executor.operations().filter((operation) => operation === "ensure-network"),
+    ["ensure-network", "ensure-network"],
+  );
 
-  const [internal, edge] = executor.calls.map((call) => call.request.input);
+  const planeCalls = executor.calls.filter((call) => call.request.operation === "ensure-network");
+  const [internal, edge] = planeCalls.map((call) => call.request.input);
   assert.equal(internal.internal, true, "the Agent plane must not reach the edge");
   assert.equal(edge.internal, false);
   assert.match(internal.name, /-internal$/);
   assert.match(edge.name, /-edge$/);
   assert.notEqual(internal.name, edge.name);
 
-  for (const call of executor.calls) {
+  for (const call of planeCalls) {
     assert.equal(call.engine.namespace, "openclaw-enterprise");
     assert.equal(call.engine.namespaceName, "openclaw-enterprise");
     assert.equal(call.request.input.labels["org.openclaw.enterprise.managed"], "true");

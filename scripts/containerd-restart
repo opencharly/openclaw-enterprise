@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Restart the stack's controller and worker without touching credentials, the database or the
+# Installation. Credentials come from the canonical store, so a restart is never a credential step.
+set -euo pipefail
+umask 077
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+
+store_dir="${OCC_CONTAINERD_STORE:-$HOME/.config/oce-containerd}"
+state_dir="${OCC_CONTAINERD_STATE:-$HOME/.local/state/oce-containerd}"
+instance="${OCC_CONTAINERD_INSTANCE:-}"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --state) state_dir="${2:-}"; shift 2 ;;
+    --store) store_dir="${2:-}"; shift 2 ;;
+    --instance) instance="${2:-}"; shift 2 ;;
+    --help)
+      printf 'Usage: scripts/containerd-restart [--state DIRECTORY] [--store DIRECTORY] [--instance NAME]\n'
+      exit 0
+      ;;
+    *) printf 'containerd-restart: unknown option %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+api_port="${OCC_CONTAINERD_API_PORT:-3100}"
+if [ -f "$store_dir/platform.env" ]; then
+  # shellcheck disable=SC1090
+  . "$store_dir/platform.env"
+fi
+api_port="${OCC_CONTAINERD_API_PORT:-$api_port}"
+if [ -f "$state_dir/api-port" ]; then
+  api_port="$(cat "$state_dir/api-port")"
+fi
+installation_file="$state_dir/installation.yaml"
+database_port="${OCC_CONTAINERD_DATABASE_PORT:-5433}"
+database_name="${OCC_DATABASE_NAME:-openclaw_enterprise}"
+api_url="http://127.0.0.1:$api_port"
+
+fail() { printf 'containerd-restart: %s: %s\n' "$1" "$2" >&2; exit 1; }
+
+[ -f "$installation_file" ] || fail "state" "$installation_file is missing; run scripts/containerd-up first"
+[ -f "$store_dir/platform.env" ] || fail "credentials" "$store_dir/platform.env is missing"
+# shellcheck disable=SC1090
+. "$store_dir/platform.env"
+[ -n "${OCC_AUTH_SECRET:-}" ] || fail "credentials" "platform.env does not define OCC_AUTH_SECRET"
+
+for role in controller worker; do
+  pid_file="$state_dir/$role.pid"
+  if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+    printf 'containerd-restart: stopping the %s (pid %s)\n' "$role" "$(cat "$pid_file")"
+    kill -TERM "$(cat "$pid_file")" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      kill -0 "$(cat "$pid_file")" 2>/dev/null || break
+      sleep 0.2
+    done
+    kill -0 "$(cat "$pid_file")" 2>/dev/null && kill -KILL "$(cat "$pid_file")" 2>/dev/null || true
+  fi
+  rm -f "$pid_file"
+done
+
+app_url="postgresql://occ_app:occ-app-local@127.0.0.1:$database_port/$database_name"
+start_process() {
+  local role="$1" entrypoint="$2"
+  printf 'containerd-restart: starting the %s\n' "$role"
+  (
+    cd "$repo_root" || exit 1
+    export OCC_CONFIG_PATH="$installation_file" OCC_DATABASE_URL="$app_url" OCC_AUTH_SECRET="$OCC_AUTH_SECRET"
+    export OCC_AUTH_BASE_URL="$api_url" OCC_HOST=127.0.0.1 OCC_PORT="$api_port" NODE_ENV=development
+    nohup node "$entrypoint" >"$state_dir/$role.log" 2>&1 </dev/null &
+    printf '%s\n' "$!" >"$state_dir/$role.pid"
+  ) || fail "$role" "could not start the $role"
+  sleep 1
+  kill -0 "$(cat "$state_dir/$role.pid")" 2>/dev/null || fail "$role" "$role exited during startup"
+}
+start_process controller apps/controller/src/server.mjs
+start_process worker apps/controller/src/worker.mjs
+
+for _ in $(seq 1 60); do
+  curl -fsS "$api_url/healthz" >/dev/null 2>&1 && break
+  sleep 2
+done
+curl -fsS "$api_url/healthz" >/dev/null 2>&1 || fail "controller" "the API did not answer on $api_url"
+grep -q '"event":"worker.started"' "$state_dir/worker.log" || fail "worker" "the worker did not report worker.started"
+printf 'containerd-restart: controller (pid %s) and worker (pid %s) are back on %s\n' \
+  "$(cat "$state_dir/controller.pid")" "$(cat "$state_dir/worker.pid")" "$api_url"

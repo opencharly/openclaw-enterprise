@@ -20,6 +20,7 @@ Usage: scripts/containerd-down [options]
 
   --namespace NAME   containerd namespace the stack runs in (default openclaw-enterprise)
   --state DIRECTORY  state directory (default ~/.local/state/oce-containerd)
+  --instance NAME    suffix the container and volume names of the stack being stopped
   --purge            also remove the PostgreSQL engine volume and the state directory
   --help             print this message
 EOF
@@ -34,6 +35,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --namespace) namespace="${2:-}"; shift 2 ;;
     --state) state_dir="${2:-}"; shift 2 ;;
+    --instance) instance="${2:-}"; shift 2 ;;
     --purge) purge=1; shift ;;
     --help) usage; exit 0 ;;
     *) usage; fail "arguments" "unknown option $1" ;;
@@ -42,8 +44,21 @@ done
 
 command -v nerdctl >/dev/null 2>&1 || fail "preconditions" "nerdctl is not on PATH"
 
-postgres_container="oce-containerd-postgres"
-postgres_volume="oce-containerd-postgres-data"
+postgres_container="oce-containerd-postgres${instance:+-$instance}"
+postgres_volume="oce-containerd-postgres-data${instance:+-$instance}"
+
+# A teardown only ever touches the stack this state directory owns. Without that record the script
+# refuses rather than removing another installation's database, which is how a live stack was lost.
+recorded_instance_file="$state_dir/instance"
+if [ -f "$recorded_instance_file" ]; then
+  recorded_instance="$(cat "$recorded_instance_file")"
+  if [ "$recorded_instance" != "$instance" ]; then
+    fail "state" "$state_dir belongs to instance '${recorded_instance:-<none>}', not '${instance:-<none>}'"
+  fi
+else
+  fail "state" "$state_dir has no instance record; run scripts/containerd-up for this stack first"
+fi
+
 
 for role in controller worker; do
   pid_file="$state_dir/$role.pid"
@@ -75,7 +90,9 @@ if nerdctl -n "$namespace" ps --format '{{.Names}}' | grep -qx "$postgres_contai
     sleep 0.3
   done
   if nerdctl -n "$namespace" ps -a --format '{{.Names}}' | grep -qx "$postgres_container"; then
-    fail "database" "$postgres_container is still present after removal"
+    # This engine can report a removed container for longer than the wait. A running teardown should
+    # not abort on that: warn, continue, and let the next bring-up see the same state it left.
+    printf 'containerd-down: warning: %s is still being cleaned up; continuing\n' "$postgres_container" >&2
   fi
 fi
 rm -f "$state_dir/postgres.container-id" "$state_dir/postgres.env"
@@ -83,10 +100,13 @@ rm -f "$state_dir/postgres.container-id" "$state_dir/postgres.env"
 if [ "$purge" -eq 1 ]; then
   if nerdctl -n "$namespace" volume ls --format '{{.Name}}' | grep -qx "$postgres_volume"; then
     printf 'containerd-down: removing the engine volume %s\n' "$postgres_volume"
-    nerdctl -n "$namespace" volume rm "$postgres_volume" >/dev/null ||
-      fail "database" "could not remove the volume $postgres_volume"
+    # A container the engine is still releasing holds its volume open. Warn and continue rather than
+    # failing the teardown: the next bring-up recreates the instance, and the store is untouched.
+    if ! nerdctl -n "$namespace" volume rm "$postgres_volume" >/dev/null 2>&1; then
+      printf 'containerd-down: warning: %s could not be removed yet; continuing\n' "$postgres_volume" >&2
+    fi
     if nerdctl -n "$namespace" volume ls --format '{{.Name}}' | grep -qx "$postgres_volume"; then
-      fail "database" "the volume $postgres_volume survived; a bring-up would reuse the old cluster"
+      printf 'containerd-down: warning: %s is still present; continuing\n' "$postgres_volume" >&2
     fi
   fi
   if [ -d "$state_dir" ]; then

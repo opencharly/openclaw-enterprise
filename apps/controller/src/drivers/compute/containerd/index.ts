@@ -285,6 +285,12 @@ export class ContainerdComputeDriver implements ComputeDriver {
       // ever placed on the no-egress plane without a route out.
       await this.ensureEgressProxy(namespace.id);
       await this.lifecycle.afterNamespacePrepared(namespace);
+      // The published-port cache is process-local, so a restarted worker would otherwise report no
+      // endpoint for an Agent whose gateway or relay container is still published and serving. The
+      // engine is the authority: read those ports back before the platform asks for an endpoint.
+      // This read follows the planes it describes: a preparation failure still rolls back exactly
+      // the networks that were created, and a read that fails leaves the cache as it was.
+      await this.hydrateGatewayPorts(namespace.id).catch(() => undefined);
       return { ...result, namespaceReady: true };
     } catch (error) {
       for (const network of created.reverse()) {
@@ -928,6 +934,27 @@ export class ContainerdComputeDriver implements ComputeDriver {
   private readonly gatewayPorts = new Map<string, number>();
 
   /**
+   * Rebuilds the published-port cache from the engine.
+   *
+   * A worker restart loses the cache while the containers it placed keep their published loopback
+   * ports, which would make `getGatewayEndpoint` answer nothing for a serving Agent until the next
+   * delivery. Exactly one container publishes per Agent: the gateway when its egress is open, and
+   * the relay when the Agent stands behind the egress proxy.
+   */
+  private async hydrateGatewayPorts(namespaceId: string): Promise<void> {
+    const selector = `${MANAGED_LABEL}=${MANAGED_VALUE},${NAMESPACE_LABEL}=${namespaceId}`;
+    const listed = await this.invoke("list-containers", { labelSelector: selector });
+    for (const name of asStringArray(asRecord(listed.output)?.names) ?? []) {
+      const state = await this.inspect(name);
+      const agentId = state.labels?.[AGENT_LABEL];
+      const port = publishedPortFrom(state.ports);
+      if (state.exists && agentId !== undefined && port !== undefined) {
+        this.gatewayPorts.set(`${namespaceId}/${agentId}`, port);
+      }
+    }
+  }
+
+  /**
    * initializeWorkspace seeds the Agent's managed storage once, in a container that holds
    * only the workspace volumes, runs without a network, and is removed whatever happens.
    */
@@ -1135,6 +1162,11 @@ export class ContainerdComputeDriver implements ComputeDriver {
         APP_SERVER_TOKEN: token,
         CODEX_HOME: CODEX_HOME_DIRECTORY,
         CODEX_LOGIN_MODE: loginMode,
+        // Node's fetch ignores HTTP(S)_PROXY unless Node is asked to parse those variables when it
+        // starts. An Agent the Driver places on the no-egress plane reaches its model and plugin
+        // endpoints only through the Driver's egress proxy, so the runtime has to honour the
+        // standard proxy environment it is handed. Without a proxy variable this changes nothing.
+        NODE_USE_ENV_PROXY: "1",
         // The provider key this harness logs in with. The Kubernetes Compute Driver projects
         // the same Secret as this exact environment variable into the same one container; the
         // shared runtime reads it, logs in, and deletes it from the process environment before
