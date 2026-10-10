@@ -1569,6 +1569,12 @@ export interface ComputePrepareRevisionFailureDiagnostic {
   readonly message?: string;
   /** Optional dependency status code when it is safe and meaningful. */
   readonly status?: number;
+  /**
+   * True when retrying cannot change the outcome, so the platform fails the work item instead
+   * of spending its attempt budget. Omitted means the Driver does not classify the cause, and
+   * the platform keeps its own retry decision.
+   */
+  readonly permanent?: boolean;
 }
 
 /** Authorized, server-admitted resource identities for an Agent-owned runtime. */

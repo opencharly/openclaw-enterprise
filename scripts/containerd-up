@@ -1,0 +1,531 @@
+#!/usr/bin/env bash
+# Bring up a self-contained OCE stack on the user's rootless containerd engine.
+#
+# Everything the platform and the containerd Compute Driver need comes up here: the engine
+# namespace, PostgreSQL as an engine workload with its own engine volume and its roles and
+# migrations applied without a human step, the Installation bootstrap, and the controller and
+# worker. The Agent gateway arrives when an Agent is deployed (see scripts/containerd-agent).
+#
+# Only nerdctl and containerd are used. The controller and the worker stay host processes
+# because the Driver's startup preflight executes the host helper, which owns this user's
+# rootless containerd socket; everything else runs on the engine.
+set -euo pipefail
+umask 077
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+
+# The canonical credential store. Every credential this stack uses lives here, 0700/0600, outside
+# the checkout and outside the stack state: it survives teardown, so a bring-up reuses the same
+# database, the same auth secret and the same service key instead of generating a second set.
+cli_namespace="${OCC_CONTAINERD_NAMESPACE:-}"
+cli_database_port="${OCC_CONTAINERD_DATABASE_PORT:-}"
+cli_api_port="${OCC_CONTAINERD_API_PORT:-}"
+store_dir="${OCC_CONTAINERD_STORE:-$HOME/.config/oce-containerd}"
+namespace="${OCC_CONTAINERD_NAMESPACE:-openclaw-enterprise}"
+state_dir="${OCC_CONTAINERD_STATE:-$HOME/.local/state/oce-containerd}"
+database_port="${OCC_CONTAINERD_DATABASE_PORT:-5433}"
+api_port="${OCC_CONTAINERD_API_PORT:-3100}"
+instance="${OCC_CONTAINERD_INSTANCE:-}"
+
+postgres_image="${OCC_CONTAINERD_POSTGRES_IMAGE:-docker.io/library/postgres:18.6}"
+gateway_image="${OCC_CONTAINERD_GATEWAY_IMAGE:-local/oce-gateway:dev}"
+agent_image="${OCC_CONTAINERD_AGENT_IMAGE:-local/oce-agent:dev}"
+proxy_image="${OCC_CONTAINERD_EGRESS_PROXY_IMAGE:-local/oce-egress-proxy:dev}"
+helper_path="${OCC_CONTAINERD_HELPER:-$repo_root/bin/compute-containerd}"
+# The namespace quota is mandatory: the Installation refuses to compose without a tenant budget.
+namespace_cpu_quota="${OCC_CONTAINERD_NAMESPACE_CPU_QUOTA:-8}"
+namespace_memory_quota="${OCC_CONTAINERD_NAMESPACE_MEMORY_QUOTA:-8Gi}"
+egress_mode="${OCC_CONTAINERD_EGRESS:-off}"
+plugin_driver="${OCC_CONTAINERD_PLUGIN_DRIVER:-}"
+# The port the egress proxy image listens on. The bundled proxy serves 3128; a local image may
+# serve another port, and the Driver renders whatever this value names into the Agent's proxy
+# environment.
+egress_port="${OCC_CONTAINERD_EGRESS_PORT:-3128}"
+startup_timeout_seconds="${OCC_CONTAINERD_STARTUP_TIMEOUT_SECONDS:-240}"
+
+database_name="openclaw_enterprise"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: scripts/containerd-up [options]
+
+  --namespace NAME          containerd namespace for the stack (default openclaw-enterprise)
+  --state DIRECTORY         state directory, 0700 (default ~/.local/state/oce-containerd)
+  --database-port PORT      loopback port for PostgreSQL (default 5433)
+  --api-port PORT           loopback port for the controller and console (default 3100)
+  --postgres-image REF      PostgreSQL image (default docker.io/library/postgres:18.6)
+  --gateway-image REF       gateway runtime image (default local/oce-gateway:dev)
+  --agent-image REF         harness runtime image (default local/oce-agent:dev)
+  --egress-proxy-image REF  egress proxy image (default local/oce-egress-proxy:dev)
+  --helper PATH             helper binary (default bin/compute-containerd)
+  --egress on|off           Agent egress: the allowlisted proxy, or open egress (default off)
+  --instance NAME           suffix the container and volume names, so several stacks coexist
+  --egress-port PORT        port the egress proxy image listens on (default 3128)
+  --plugin off|occ-plugin|codex-plugin
+                            select a bundled Plugin Driver so Agents may use plugins (default off)
+  --help                    print this message
+
+Environment variables with the OCC_CONTAINERD_ prefix set the same values.
+EOF
+}
+
+fail() {
+  local step="$1"
+  local message="$2"
+  shift 2
+  printf 'containerd-up: %s: %s\n' "$step" "$message" >&2
+  if [ "$#" -gt 0 ]; then
+    printf 'containerd-up: retry with: %s\n' "$*" >&2
+  fi
+  exit 1
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --namespace) namespace="${2:-}"; cli_namespace="${2:-}"; shift 2 ;;
+    --state) state_dir="${2:-}"; shift 2 ;;
+    --database-port) database_port="${2:-}"; cli_database_port="${2:-}"; shift 2 ;;
+    --api-port) api_port="${2:-}"; cli_api_port="${2:-}"; shift 2 ;;
+    --postgres-image) postgres_image="${2:-}"; shift 2 ;;
+    --gateway-image) gateway_image="${2:-}"; shift 2 ;;
+    --agent-image) agent_image="${2:-}"; shift 2 ;;
+    --egress-proxy-image) proxy_image="${2:-}"; shift 2 ;;
+    --helper) helper_path="${2:-}"; shift 2 ;;
+    --egress) egress_mode="${2:-}"; shift 2 ;;
+    --plugin) plugin_driver="${2:-}"; shift 2 ;;
+    --egress-port) egress_port="${2:-}"; shift 2 ;;
+    --instance) instance="${2:-}"; shift 2 ;;
+    --help) usage; exit 0 ;;
+    *) usage; fail "arguments" "unknown option $1" ;;
+  esac
+done
+
+instance="${OCC_CONTAINERD_INSTANCE:-$instance}"
+
+# The container and volume names follow the parsed instance, never a pre-parse default: a flag that
+# arrives later must not leave this run pointing at another stack's names.
+postgres_container="oce-containerd-postgres${instance:+-$instance}"
+postgres_volume="oce-containerd-postgres-data${instance:+-$instance}"
+if [ -z "$postgres_container" ] || [ -z "$postgres_volume" ]; then
+  fail "arguments" "the stack's container and volume names could not be derived"
+fi
+
+for value in "$namespace" "$state_dir" "$database_port" "$api_port"; do
+  if [ -z "$value" ]; then
+    usage
+    fail "arguments" "a required option was left empty"
+  fi
+done
+
+api_url="http://127.0.0.1:$api_port"
+app_url="postgresql://occ_app:occ-app-local@127.0.0.1:$database_port/$database_name"
+migration_url="postgresql://occ_migrator:occ-migrator-local@127.0.0.1:$database_port/$database_name"
+
+step() {
+  printf 'containerd-up: %s\n' "$1"
+}
+
+# One nerdctl invocation against the stack's engine namespace.
+nerdctl_stack() {
+  nerdctl -n "$namespace" "$@"
+}
+
+for tool in nerdctl node pnpm curl; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    fail "preconditions" "$tool is not on PATH"
+  fi
+done
+
+if ! nerdctl info >/dev/null 2>&1; then
+  fail "preconditions" "nerdctl cannot reach a rootless containerd engine" \
+    "containerd-rootless-setuptool.sh install"
+fi
+
+if [ ! -x "$helper_path" ]; then
+  step "building the helper at $helper_path"
+  (cd "$repo_root" && pnpm helper:containerd:build) ||
+    fail "helper" "could not build the compute helper"
+fi
+
+# The runtime images are the one input the engine cannot produce by itself: they are published
+# per release (digest-pinned) or built by a developer and loaded into this namespace. Fail with
+# the exact commands rather than discovering the gap mid-delivery.
+for image in "$gateway_image" "$agent_image" "$proxy_image"; do
+  if ! nerdctl_stack image inspect "$image" >/dev/null 2>&1; then
+    fail "images" "$image is not present in containerd namespace $namespace" \
+      "nerdctl -n $namespace load < image.tar"
+  fi
+done
+
+recorded_instance_file="$state_dir/instance"
+if [ -f "$recorded_instance_file" ]; then
+  recorded_instance="$(cat "$recorded_instance_file")"
+  if [ "$recorded_instance" != "$instance" ]; then
+    fail "state" "$state_dir belongs to instance '${recorded_instance:-<none>}', not '${instance:-<none>}'"
+  fi
+fi
+if nerdctl -n "$namespace" ps -a --format '{{.Names}}' | grep -qx "$postgres_container" && [ ! -f "$recorded_instance_file" ]; then
+  fail "state" "container $postgres_container already exists and is not recorded by $state_dir; use --instance to name a separate stack"
+fi
+mkdir -p "$state_dir" "$store_dir"
+chmod 0700 "$state_dir" "$store_dir"
+# The store is authoritative for credentials; the state directory keeps only what a run produces.
+if [ -f "$store_dir/platform.env" ]; then
+  # shellcheck disable=SC1090
+  . "$store_dir/platform.env"
+fi
+namespace="${cli_namespace:-${OCC_CONTAINERD_NAMESPACE:-$namespace}}"
+database_port="${cli_database_port:-${OCC_CONTAINERD_DATABASE_PORT:-$database_port}}"
+database_name="${OCC_DATABASE_NAME:-$database_name}"
+api_url="http://127.0.0.1:$api_port"
+app_url="postgresql://occ_app:occ-app-local@127.0.0.1:$database_port/$database_name"
+migration_url="postgresql://occ_migrator:occ-migrator-local@127.0.0.1:$database_port/$database_name"
+# The selected Configuration and Secret Drivers and the Compute Driver's credential directory
+# all need their roots to exist before composition runs.
+for root in configuration credentials secrets; do
+  mkdir -p "$state_dir/$root"
+  chmod 0700 "$state_dir/$root"
+done
+
+platform_env="$store_dir/platform.env"
+if [ ! -f "$platform_env" ]; then
+  step "creating the canonical credential store at $platform_env"
+  {
+    printf '# Platform credentials for the engine-side stack. Never commit this file.\n'
+    printf 'OCC_AUTH_SECRET=%s\n' "$(openssl rand -hex 32)"
+    printf 'OCC_CONTAINERD_POSTGRES_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 24)"
+    printf 'OCC_CONTAINERD_NAMESPACE=%s\n' "$namespace"
+    printf 'OCC_CONTAINERD_DATABASE_PORT=%s\n' "$database_port"
+    printf 'OCC_DATABASE_NAME=%s\n' "$database_name"
+    printf 'OCC_CONTAINERD_API_PORT=%s\n' "$api_port"
+    printf 'OCC_BOOTSTRAP_ADMIN_EMAIL=%s\n' "${OCC_CONTAINERD_ADMIN_EMAIL:-admin@openclaw.local}"
+    printf '# Development mode reads these two names, so a from-scratch bring-up applies them.\n'
+    printf 'OPENCLAW_DEV_EMAIL=%s\n' "${OCC_CONTAINERD_ADMIN_EMAIL:-admin@openclaw.local}"
+    printf '# The administrator credential a fresh Installation is logged into with.\n'
+    printf 'OPENCLAW_DEV_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+  } >"$platform_env"
+  chmod 0600 "$platform_env"
+fi
+# shellcheck disable=SC1090
+. "$platform_env"
+if [ -z "${OCC_CONTAINERD_POSTGRES_ADMIN_PASSWORD:-}" ] || [ -z "${OCC_AUTH_SECRET:-}" ]; then
+  fail "credentials" "$platform_env does not define the stack credentials"
+fi
+if [ -z "${OCC_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -z "${OPENCLAW_DEV_EMAIL:-}" ]; then
+  printf 'OCC_BOOTSTRAP_ADMIN_EMAIL=%s\n' "${OCC_CONTAINERD_ADMIN_EMAIL:-admin@openclaw.local}" >>"$platform_env"
+  printf 'OPENCLAW_DEV_EMAIL=%s\n' "${OCC_CONTAINERD_ADMIN_EMAIL:-admin@openclaw.local}" >>"$platform_env"
+  # shellcheck disable=SC1090
+  . "$platform_env"
+fi
+if [ -z "${OPENCLAW_DEV_PASSWORD:-}" ]; then
+  printf '# The administrator credential a fresh Installation is logged into with.\n' >>"$platform_env"
+  printf 'OPENCLAW_DEV_PASSWORD=%s\n' "$(openssl rand -hex 16)" >>"$platform_env"
+  # shellcheck disable=SC1090
+  . "$platform_env"
+  step "generated the administrator credential in $platform_env"
+fi
+
+# A stack records its own coordinates: a later run against the same state directory resumes the
+# same database port even when the canonical store names another stack's port.
+if [ -f "$state_dir/database-port" ] && [ -z "$cli_database_port" ]; then
+  database_port="$(cat "$state_dir/database-port")"
+fi
+if [ ! -f "$state_dir/database-port" ]; then
+  printf '%s\n' "$database_port" >"$state_dir/database-port"
+  chmod 0600 "$state_dir/database-port"
+fi
+printf '%s\n' "$instance" >"$state_dir/instance"
+chmod 0600 "$state_dir/instance"
+api_url="http://127.0.0.1:$api_port"
+app_url="postgresql://occ_app:occ-app-local@127.0.0.1:$database_port/$database_name"
+migration_url="postgresql://occ_migrator:occ-migrator-local@127.0.0.1:$database_port/$database_name"
+namespace="${OCC_CONTAINERD_NAMESPACE:-$namespace}"
+database_name="${OCC_DATABASE_NAME:-$database_name}"
+api_url="http://127.0.0.1:$api_port"
+app_url="postgresql://occ_app:occ-app-local@127.0.0.1:$database_port/$database_name"
+migration_url="postgresql://occ_migrator:occ-migrator-local@127.0.0.1:$database_port/$database_name"
+# The state directory owns the stack's coordinates once it exists, so a second run against the
+# same state resumes the same engine namespace and ports instead of moving them.
+namespace="${OCC_CONTAINERD_NAMESPACE:-$namespace}"
+api_port="${cli_api_port:-${OCC_CONTAINERD_API_PORT:-$api_port}}"
+api_url="http://127.0.0.1:$api_port"
+app_url="postgresql://occ_app:occ-app-local@127.0.0.1:$database_port/$database_name"
+migration_url="postgresql://occ_migrator:occ-migrator-local@127.0.0.1:$database_port/$database_name"
+
+if ! nerdctl_stack volume ls --format '{{.Name}}' | grep -qx "$postgres_volume"; then
+  step "creating the PostgreSQL engine volume $postgres_volume"
+  nerdctl_stack volume create "$postgres_volume" >/dev/null
+fi
+
+running="$(nerdctl_stack ps --format '{{.Names}}' | grep -x "$postgres_container" || true)"
+if [ -z "$running" ]; then
+  step "starting PostgreSQL on 127.0.0.1:$database_port"
+  postgres_env="$state_dir/postgres.env"
+  {
+    printf 'POSTGRES_DB=%s\n' "$database_name"
+    printf 'POSTGRES_USER=postgres\n'
+    printf 'POSTGRES_PASSWORD=%s\n' "$OCC_CONTAINERD_POSTGRES_ADMIN_PASSWORD"
+  } >"$postgres_env"
+  chmod 0600 "$postgres_env"
+  # The admin password travels in an env file, never in argv. The roles come from the same
+  # local-only bootstrap the development stack uses, applied by the entrypoint on first init.
+  if ! nerdctl_stack run -d \
+    --name "$postgres_container" \
+    --restart=always \
+    --env-file "$postgres_env" \
+    -p "127.0.0.1:$database_port:5432" \
+    -v "$postgres_volume:/var/lib/postgresql" \
+    -v "$repo_root/migrations/init-local.sql:/docker-entrypoint-initdb.d/00-occ-roles.sql:ro" \
+    --health-cmd "pg_isready -U postgres -d $database_name" \
+    --health-interval 2s \
+    --health-timeout 3s \
+    --health-retries 30 \
+    "$postgres_image" > "$state_dir/postgres.container-id"; then
+    fail "database" "could not start $postgres_container" \
+      "nerdctl -n $namespace logs $postgres_container"
+  fi
+fi
+
+step "waiting for PostgreSQL to accept connections"
+deadline=$((SECONDS + startup_timeout_seconds))
+until nerdctl_stack exec "$postgres_container" pg_isready -U postgres -d "$database_name" >/dev/null 2>&1; do
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    fail "database" "PostgreSQL did not become ready within ${startup_timeout_seconds}s" \
+      "nerdctl -n $namespace logs $postgres_container"
+  fi
+  sleep 2
+done
+
+# An engine volume created before this script existed may already hold a database whose roles
+# were applied by hand; the local bootstrap is not idempotent, so apply it only when missing.
+roles_present="$(nerdctl_stack exec "$postgres_container" \
+  psql -U postgres -d "$database_name" -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'occ_app'" 2>/dev/null | tr -d '[:space:]')"
+if [ "$roles_present" != "1" ]; then
+  step "creating the local database roles"
+  nerdctl_stack exec -i "$postgres_container" \
+    psql -U postgres -d "$database_name" -v ON_ERROR_STOP=1 -q \
+    <"$repo_root/migrations/init-local.sql" >/dev/null ||
+    fail "database" "could not apply migrations/init-local.sql"
+fi
+
+# One migration step, mirroring the initialization Job in the production chart: the same
+# script, the same migrator URL, run to completion before the API starts.
+step "applying migrations as occ_migrator"
+(cd "$repo_root" &&
+  OCC_MIGRATION_DATABASE_URL="$migration_url" NODE_ENV=development pnpm db:migrate) ||
+  fail "database" "migrations did not complete"
+
+# The egress proxy is the substitute for a Kubernetes default-deny NetworkPolicy, and the
+# reference documents it as the Agent's isolation boundary. It is off by default here for one
+# measured reason: with the proxy named, Agent workloads stand on a no-egress plane, and a
+# dedicated Codex harness that logs in with a provider key probes its model endpoint without
+# traversing that proxy, so its probe times out and the Agent never authenticates. Select
+# --egress on to keep the enforced topology for Agents whose credential does not need an
+# endpoint outside the allowlist.
+case "$egress_mode" in
+  on | off) ;;
+  *) fail "arguments" "--egress must be on or off" ;;
+esac
+
+chmod 0600 "$state_dir/instance"
+api_port_file="$state_dir/api-port"
+printf '%s\n' "$api_port" >"$api_port_file"
+chmod 0600 "$api_port_file"
+installation_file="$state_dir/installation.yaml"
+if [ ! -f "$installation_file" ]; then
+  step "writing the Installation document at $installation_file"
+  cat >"$installation_file" <<EOF
+occ:
+  cluster: local-containerd
+drivers:
+  configuration:
+    id: occ/filesystem-configuration
+    configuration:
+      root: $state_dir/configuration
+  iam:
+    id: native-iam
+    configuration: {}
+  compute:
+    id: compute-containerd
+    configuration:
+      helper:
+        path: $helper_path
+        timeoutSeconds: 180
+      containerd:
+        namespace: $namespace
+      images:
+        gateway: $gateway_image
+        agent: $agent_image
+        requireImmutableDigest: false
+      resources:
+        gateway:
+          requests: { cpu: 100m, memory: 1792Mi }
+          limits: { cpu: "4", memory: 3Gi }
+        agent:
+          requests: { cpu: 100m, memory: 512Mi }
+          limits: { cpu: "2", memory: 2Gi }
+        namespace:
+          quota:
+            limits.cpu: "$namespace_cpu_quota"
+            limits.memory: $namespace_memory_quota
+          containerDefaults:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: "1", memory: 1Gi }
+      credentials:
+        directory: $state_dir/credentials
+EOF
+  if [ "$egress_mode" = "on" ]; then
+    cat >>"$installation_file" <<EOF
+      egress:
+        proxyImage: $proxy_image
+        port: $egress_port
+        allowlist:
+          - registry.npmjs.org
+          - api.openai.com
+          - auth.openai.com
+          - chatgpt.com
+EOF
+  fi
+  case "$plugin_driver" in
+    "") ;;
+    occ-plugin | codex-plugin)
+      cat >>"$installation_file" <<EOF
+  plugin:
+    id: $plugin_driver
+    configuration: {}
+EOF
+      ;;
+    *) fail "arguments" "--plugin must be off, occ-plugin or codex-plugin" ;;
+  esac
+  cat >>"$installation_file" <<EOF
+  secret:
+    id: occ/filesystem-secret
+    configuration:
+      directory: $state_dir/secrets
+EOF
+  chmod 0600 "$installation_file"
+fi
+
+bootstrap_dir="$state_dir/bootstrap"
+mkdir -p "$bootstrap_dir"
+chmod 0700 "$bootstrap_dir"
+# The service key and the administrator password are canonical credentials: they live in the store,
+# so a fresh state directory against an existing database needs no bootstrap and no new key.
+service_key_file="$bootstrap_dir/initial-admin-service-key.json"
+admin_password_file="$bootstrap_dir/initial-admin-password.txt"
+canonical_admin_password_file="$store_dir/admin-password.txt"
+installations_present="$(nerdctl_stack exec "$postgres_container" \
+  psql -U postgres -d "$database_name" -tAc "select count(*) from information_schema.tables where table_schema = 'occ' and table_name = 'installations'; " 2>/dev/null | tr -d '[:space:]')"
+installation_rows=0
+if [ "$installations_present" = "1" ]; then
+  installation_rows="$(nerdctl_stack exec "$postgres_container" \
+    psql -U postgres -d "$database_name" -tAc "select count(*) from occ.installations" 2>/dev/null | tr -d '[:space:]')"
+fi
+
+if [ "${installation_rows:-0}" = "0" ]; then
+  # One bootstrap step, mirroring the initialization Job in the production chart: it creates
+  # the Installation, the administrator and the service key, so no human provisions anything.
+  step "bootstrapping the platform Installation and administrator"
+  admin_email="${OCC_CONTAINERD_ADMIN_EMAIL:-admin@openclaw.local}"
+  (
+    cd "$repo_root" &&
+      NODE_ENV=development \
+      OCC_CONFIG_PATH="$installation_file" \
+      OCC_DATABASE_URL="$app_url" \
+      OCC_AUTH_SECRET="$OCC_AUTH_SECRET" \
+      OCC_AUTH_BASE_URL="$api_url" \
+      OCC_BOOTSTRAP_ADMIN_EMAIL="$admin_email" \
+      OCC_BOOTSTRAP_INSTALLATION_NAME="${OCC_CONTAINERD_INSTALLATION_NAME:-OpenClaw Local Development}" \
+      OPENCLAW_DEV_PASSWORD="$OPENCLAW_DEV_PASSWORD" \
+      OPENCLAW_DEV_EMAIL="${OPENCLAW_DEV_EMAIL:-admin@openclaw.local}" \
+      OCC_BOOTSTRAP_PASSWORD_FILE="$admin_password_file" \
+      OCC_BOOTSTRAP_SERVICE_KEY_FILE="$service_key_file" \
+      node scripts/bootstrap-installation.mjs
+  ) || fail "bootstrap" "the platform bootstrap did not complete"
+  # A canonical copy lets another stack or an automated test read the same service key; an existing
+  # store file is never overwritten, because it may belong to a stack that is still running.
+  if [ -f "$service_key_file" ] && [ ! -f "$store_dir/service-key.json" ]; then
+    install -m 0600 "$service_key_file" "$store_dir/service-key.json"
+  fi
+  # The administrator credential is canonical too: a fresh Installation can only be logged into with
+  # the password this bootstrap generated, so the store replaces it deliberately and says so.
+  if [ -f "$admin_password_file" ]; then
+    install -m 0600 "$admin_password_file" "$canonical_admin_password_file"
+    step "stored the bootstrap administrator credential at $canonical_admin_password_file"
+  fi
+else
+  step "the database already holds an Installation; reusing the installed credentials"
+fi
+
+start_process() {
+  local role="$1"
+  local entrypoint="$2"
+  local pid_file="$state_dir/$role.pid"
+  local log_file="$state_dir/$role.log"
+  if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+    step "$role is already running (pid $(cat "$pid_file"))"
+    return 0
+  fi
+  step "starting the $role"
+  # The credentials travel in the environment, never in argv, and the process outlives this
+  # script because its stdio is redirected and it ignores SIGHUP.
+  (
+    cd "$repo_root" || exit 1
+    export OCC_CONFIG_PATH="$installation_file"
+    export OCC_DATABASE_URL="$app_url"
+    export OCC_AUTH_SECRET="$OCC_AUTH_SECRET"
+    export OCC_AUTH_BASE_URL="$api_url"
+    export OCC_HOST=127.0.0.1
+    export OCC_PORT="$api_port"
+    export NODE_ENV=development
+    nohup node "$entrypoint" >"$log_file" 2>&1 </dev/null &
+    printf '%s\n' "$!" >"$pid_file"
+  ) || fail "$role" "could not start the $role"
+  sleep 1
+  if ! kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+    fail "$role" "$role exited during startup" "tail -n 40 $log_file"
+  fi
+}
+
+start_process controller apps/controller/src/server.mjs
+start_process worker apps/controller/src/worker.mjs
+
+step "waiting for the controller API on $api_url"
+deadline=$((SECONDS + startup_timeout_seconds))
+until curl -fsS "$api_url/healthz" >/dev/null 2>&1; do
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    fail "controller" "the API did not answer on $api_url within ${startup_timeout_seconds}s" \
+      "tail -n 40 $state_dir/controller.log"
+  fi
+  sleep 2
+done
+
+if ! grep -q '"event":"worker.started"' "$state_dir/worker.log" 2>/dev/null; then
+  fail "worker" "the worker did not report worker.started" "tail -n 40 $state_dir/worker.log"
+fi
+
+# Record the OCC Namespaces this stack owns, so scripts/containerd-down can remove exactly the
+# platform containers it created, and never a container belonging to another installation.
+service_key="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['data']['key'])" "$service_key_file")"
+curl -fsS -H "x-api-key: $service_key" "$api_url/namespaces" 2>/dev/null |
+  python3 -c "import json,sys; print('\n'.join(entry['id'] for entry in json.load(sys.stdin).get('data', [])))" \
+    >"$state_dir/namespaces" 2>/dev/null || true
+
+cat <<EOF
+containerd-up: the stack is up
+
+  engine namespace  $namespace
+  PostgreSQL        $postgres_container on 127.0.0.1:$database_port (volume $postgres_volume)
+  console and API   $api_url/console
+  Installation      $installation_file
+  state             $state_dir
+  logs              $state_dir/controller.log, $state_dir/worker.log
+  credentials       $store_dir (platform.env, service-key.json, admin-password.txt, 0600)
+  service key       $service_key_file
+  admin password    $admin_password_file
+
+Deploy a dedicated Codex Agent through the platform:
+
+  node scripts/containerd-agent.mjs --state $state_dir --provider-key-file FILE --model openai/gpt-5.6-luna
+EOF

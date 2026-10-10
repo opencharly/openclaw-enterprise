@@ -39,6 +39,19 @@ import {
 import { createExternalDriver, loadDriverPackage } from "./driver-packages.ts";
 import { SshComputeDriver, type SshComputeDriverOptions } from "../drivers/compute/ssh/index.ts";
 import {
+  FILESYSTEM_CONFIGURATION_ID,
+  FilesystemConfigurationDriver,
+  type FilesystemConfigurationDriverOptions,
+} from "../drivers/configuration/filesystem/index.ts";
+import {
+  FilesystemSecretDriver,
+  type FilesystemSecretDriverOptions,
+} from "../drivers/secret/filesystem/index.ts";
+import {
+  ContainerdComputeDriver,
+  type ContainerdComputeDriverOptions,
+} from "../drivers/compute/containerd/index.ts";
+import {
   KubernetesConfigurationDriver,
   type KubernetesConfigurationDriverOptions,
 } from "../drivers/configuration/kubernetes/index.ts";
@@ -604,15 +617,17 @@ export async function loadInstallationConfiguration(options: {
     options.packageRoot !== undefined,
   );
   const sshCompute = computePackage === undefined && computeSelection.id === "compute-ssh";
-  const kubernetesCompute = computePackage === undefined && !sshCompute;
+  const containerdCompute =
+    computePackage === undefined && computeSelection.id === "compute-containerd";
+  const kubernetesCompute = computePackage === undefined && !sshCompute && !containerdCompute;
   if (repoSelection !== undefined && (!kubernetesCompute || sandboxSelection !== undefined)) {
     throw new Error(
       "drivers.repo requires the bundled Kubernetes Compute Driver without a Sandbox Driver.",
     );
   }
-  if (sshCompute && sandboxSelection !== undefined) {
+  if ((sshCompute || containerdCompute) && sandboxSelection !== undefined) {
     throw new Error(
-      "drivers.sandbox is unsupported with compute-ssh; it requires the bundled Kubernetes Compute Driver.",
+      "drivers.sandbox is unsupported with compute-ssh or compute-containerd; it requires the bundled Kubernetes Compute Driver.",
     );
   }
   const sandboxPackage =
@@ -629,11 +644,16 @@ export async function loadInstallationConfiguration(options: {
       ? await loadBundledOpenShellSandboxDriver()
       : undefined;
 
+  // An engine without a cluster ConfigMap API stores documents on the worker host.
+  const filesystemConfiguration =
+    configurationSelection.id === FILESYSTEM_CONFIGURATION_ID && configurationPackage === undefined;
   const configured = selected(
     configurationSelection,
     "configuration",
-    configurationPackage?.implementation ?? "occ/kubernetes-configmap",
-    configurationPackage?.module ?? KubernetesConfigurationDriver,
+    configurationPackage?.implementation ??
+      (filesystemConfiguration ? "occ/filesystem-configuration" : "occ/kubernetes-configmap"),
+    configurationPackage?.module ??
+      (filesystemConfiguration ? FilesystemConfigurationDriver : KubernetesConfigurationDriver),
   );
   const iam = selected(
     iamSelection,
@@ -644,14 +664,23 @@ export async function loadInstallationConfiguration(options: {
   const compute = selected(
     computeSelection,
     "compute",
-    computePackage?.implementation ?? (sshCompute ? "occ/ssh" : "occ/kubernetes"),
-    computePackage?.module ?? (sshCompute ? SshComputeDriver : KubernetesComputeDriver),
+    computePackage?.implementation ??
+      (sshCompute ? "occ/ssh" : containerdCompute ? "occ/containerd" : "occ/kubernetes"),
+    computePackage?.module ??
+      (sshCompute
+        ? SshComputeDriver
+        : containerdCompute
+          ? ContainerdComputeDriver
+          : KubernetesComputeDriver),
   );
+  // An engine without a cluster Secret API stores values on the host that runs the worker.
+  const filesystemSecret =
+    secretSelection.id === "occ/filesystem-secret" && secretSelection.package === undefined;
   const secret = selected(
     secretSelection,
     "secret",
-    "occ/kubernetes-secret",
-    KubernetesSecretDriver,
+    filesystemSecret ? "occ/filesystem-secret" : "occ/kubernetes-secret",
+    filesystemSecret ? FilesystemSecretDriver : KubernetesSecretDriver,
   );
   if (repoSelection !== undefined) {
     const kubernetes = compute.configuration as unknown as KubernetesComputeDriverOptions;
@@ -702,6 +731,13 @@ export async function loadInstallationConfiguration(options: {
       );
     }
   }
+  if (options.mode === "production" && containerdCompute) {
+    const containerd = compute.configuration as unknown as ContainerdComputeDriverOptions;
+    // A development profile may run locally built images; production must refuse a tag.
+    if (containerd.images.requireImmutableDigest !== true) {
+      throw new Error("Production containerd workloads require immutable image digests.");
+    }
+  }
   const installation = Object.freeze({
     occ: Object.freeze({ cluster }),
     presets: Object.freeze({ includeDefaults }),
@@ -723,16 +759,21 @@ export async function loadInstallationConfiguration(options: {
     }),
   });
   const configurationDriver =
-    configurationPackage === undefined
-      ? new KubernetesConfigurationDriver(
-          configured.configuration as unknown as KubernetesConfigurationDriverOptions,
-          { id: configured.id, implementation: configured.implementation },
-        )
-      : (createExternalDriver(
+    configurationPackage !== undefined
+      ? (createExternalDriver(
           configurationPackage.module,
           configured,
           "configuration",
-        ) as ConfigurationDriver);
+        ) as ConfigurationDriver)
+      : filesystemConfiguration
+        ? new FilesystemConfigurationDriver(
+            configured.configuration as unknown as FilesystemConfigurationDriverOptions,
+            { id: configured.id, implementation: configured.implementation },
+          )
+        : new KubernetesConfigurationDriver(
+            configured.configuration as unknown as KubernetesConfigurationDriverOptions,
+            { id: configured.id, implementation: configured.implementation },
+          );
   // One gateway object serves both member Drivers, so they share clients and naming.
   const openShell =
     openShellBackend === undefined
@@ -777,6 +818,27 @@ export async function loadInstallationConfiguration(options: {
       compute,
       "compute",
     ) as ComputeDriver;
+  } else if (containerdCompute) {
+    computeDriver = new ContainerdComputeDriver(
+      compute.configuration as unknown as ContainerdComputeDriverOptions,
+      {
+        // The helper owns the rootless engine, so the Driver needs no node enrolment.
+        id: compute.id,
+        implementation: compute.implementation,
+        lifecycleDrivers: [configurationDriver],
+        // A staged Codex OAuth login lives in the selected Secret Driver's store, exactly as it
+        // lives in the cluster Secret API for the Kubernetes Compute Driver. Inject the store
+        // that Driver already owns instead of making the operator name the same path twice.
+        ...(filesystemSecret
+          ? {
+              secretStore: {
+                directory: (secret.configuration as unknown as FilesystemSecretDriverOptions)
+                  .directory,
+              },
+            }
+          : {}),
+      },
+    );
   } else if (sshCompute) {
     computeDriver = new SshComputeDriver(
       compute.configuration as unknown as SshComputeDriverOptions,
@@ -822,10 +884,15 @@ export async function loadInstallationConfiguration(options: {
       },
     );
   }
-  const secretDriver = new KubernetesSecretDriver(
-    secret.configuration as unknown as KubernetesSecretDriverOptions,
-    { id: secret.id, implementation: secret.implementation },
-  );
+  const secretDriver = filesystemSecret
+    ? new FilesystemSecretDriver(secret.configuration as unknown as FilesystemSecretDriverOptions, {
+        id: secret.id,
+        implementation: secret.implementation,
+      })
+    : new KubernetesSecretDriver(secret.configuration as unknown as KubernetesSecretDriverOptions, {
+        id: secret.id,
+        implementation: secret.implementation,
+      });
   const createIAMDriver = (state: NativeIAMStateStore): IAMDriver => {
     return iamPackage === undefined
       ? new NativeIAMDriver(state, { id: iam.id, implementation: iam.implementation })

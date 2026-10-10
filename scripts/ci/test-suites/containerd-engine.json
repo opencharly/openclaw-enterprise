@@ -1,0 +1,19 @@
+{
+  "requiredEnv": ["OCC_TEST_CONTAINERD_HELPER", "OCC_TEST_CONTAINERD_IMAGE"],
+  "env": {
+    "OCC_TEST_CONTAINERD_REAL": "1"
+  },
+  "prepare": {
+    "requireEnv": ["OCC_TEST_CONTAINERD_HELPER", "OCC_TEST_CONTAINERD_IMAGE"]
+  },
+  "files": [
+    {
+      "path": "tests/integration/containerd-compute-real.test.mjs",
+      "expectedTests": [
+        "the containerd Driver delivers a revision on the real rootless engine",
+        "an Installation that names a proxy gets one on both of the Agent's planes",
+        "a staged Codex login is seeded into the harness's home and never into the gateway"
+      ]
+    }
+  ]
+}

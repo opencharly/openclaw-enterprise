@@ -892,6 +892,11 @@ function prepareHarnessAuth(
     // The paired Sandbox supplies the credential environment; no Secret is projected here.
     if (harness.id === "codex") {
       environment.push({ name: "CODEX_LOGIN_MODE", value: resolvedAuth.loginMode });
+      // Node's fetch ignores HTTP(S)_PROXY unless Node is asked to parse those variables when it
+      // starts, so a harness behind a proxy would otherwise reach nothing. Same environment the
+      // containerd Compute Driver sets for the same shared runtime. Without a proxy variable this
+      // changes nothing.
+      environment.push({ name: "NODE_USE_ENV_PROXY", value: "1" });
     }
     return {
       loginMode: resolvedAuth.loginMode,

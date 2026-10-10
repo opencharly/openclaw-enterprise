@@ -5,6 +5,7 @@ import type {
   Configuration,
   ConfigurationDriver,
   ConfigurationReference,
+  JSONSchema,
   OpenClawConfigurationDocument,
 } from "@openclaw-enterprise/contracts";
 import { validateModelCredentialReferences } from "../model-auth.ts";
@@ -24,19 +25,64 @@ function pathFor(root: string, reference: ConfigurationReference): string {
   return join(root, reference.namespaceId, `${reference.id}.json`);
 }
 
+export interface FilesystemConfigurationDriverOptions {
+  /** Absolute directory that owns the stored Configuration documents. */
+  readonly root: string;
+}
+
+interface FilesystemConfigurationSelection {
+  readonly id?: string;
+  readonly implementation?: string;
+}
+
+export const FILESYSTEM_CONFIGURATION_ID = "occ/filesystem-configuration";
+
+/**
+ * Stores Configuration documents as files on the host that runs the worker, for engines
+ * with no cluster ConfigMap API.
+ */
 export class FilesystemConfigurationDriver implements ConfigurationDriver {
-  readonly id = "configuration-filesystem-development";
+  static readonly configurationSchema: JSONSchema = Object.freeze({
+    type: "object",
+    additionalProperties: false,
+    required: ["root"],
+    properties: {
+      // A relative root would resolve against the worker's working directory.
+      root: { type: "string", pattern: "^/" },
+    },
+  });
+
+  static validateConfiguration(configuration: unknown): void {
+    const value =
+      typeof configuration === "object" && configuration !== null
+        ? (configuration as Record<string, unknown>)
+        : undefined;
+    if (value === undefined) {
+      throw new Error("Filesystem Configuration options are required.");
+    }
+    const unknown = Object.keys(value).filter((key) => key !== "root");
+    if (unknown.length > 0) {
+      throw new Error(`Filesystem Configuration options contain unsupported field ${unknown[0]}.`);
+    }
+    const root = value.root;
+    if (typeof root !== "string" || !root.startsWith("/")) {
+      throw new Error("Filesystem Configuration root must be an absolute path.");
+    }
+  }
+
+  readonly id: string;
+  readonly implementation: string;
   readonly capability = "configuration" as const;
-  readonly implementation = "filesystem-local";
   private readonly root: string;
 
-  constructor(root: string) {
-    if (typeof root !== "string" || root.trim().length === 0) {
-      throw new Error(
-        "OCC_DEVELOPMENT_CONFIGURATION_ROOT is required for filesystem development configurations.",
-      );
-    }
-    this.root = resolve(root);
+  constructor(
+    options: FilesystemConfigurationDriverOptions,
+    selection: FilesystemConfigurationSelection = {},
+  ) {
+    FilesystemConfigurationDriver.validateConfiguration(options);
+    this.id = selection.id ?? FILESYSTEM_CONFIGURATION_ID;
+    this.implementation = selection.implementation ?? FILESYSTEM_CONFIGURATION_ID;
+    this.root = resolve(options.root);
   }
 
   async validateValues(values: OpenClawConfigurationDocument): Promise<void> {
@@ -105,5 +151,11 @@ export class FilesystemConfigurationDriver implements ConfigurationDriver {
 export function createFilesystemDevelopmentConfigurationDriverFromEnv(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): FilesystemConfigurationDriver {
-  return new FilesystemConfigurationDriver(environment.OCC_DEVELOPMENT_CONFIGURATION_ROOT ?? "");
+  const root = environment.OCC_DEVELOPMENT_CONFIGURATION_ROOT ?? "";
+  if (root.trim().length === 0) {
+    throw new Error(
+      "OCC_DEVELOPMENT_CONFIGURATION_ROOT is required for filesystem development configurations.",
+    );
+  }
+  return new FilesystemConfigurationDriver({ root });
 }

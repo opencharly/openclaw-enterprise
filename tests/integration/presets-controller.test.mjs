@@ -26,7 +26,7 @@ async function createFixture(t, options = {}) {
       policy?.identities.find((identity) => identity.id === identityId),
   });
   // The real filesystem Driver enforces native credential rules, including bootstrap defaults.
-  const configurationDriver = new FilesystemConfigurationDriver(root);
+  const configurationDriver = new FilesystemConfigurationDriver({ root });
   const fixture = await createConsoleAppFixture(t, {
     state,
     providers: [],

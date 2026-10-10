@@ -5,6 +5,7 @@
   },
   "fileConcurrency": 4,
   "parallelFiles": [
+    "tests/integration/containerd-compute-workflow.test.mjs",
     "tests/integration/postgres-worker-agent-revision-health.test.mjs",
     "tests/integration/postgres-worker-agent-revision.test.mjs",
     "tests/integration/postgres-worker-agent-revision-teardown.test.mjs",
@@ -13,6 +14,12 @@
     "tests/integration/occ-metrics.test.mjs"
   ],
   "files": [
+    {
+      "path": "tests/integration/containerd-compute-workflow.test.mjs",
+      "expectedTests": [
+        "the worker delivers an Agent through the rootless containerd Compute Driver"
+      ]
+    },
     {
       "path": "tests/integration/occ-metrics.test.mjs",
       "expectedTests": [

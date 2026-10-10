@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { databaseUrl, requiresPostgres } from "../helpers/postgres-database.mjs";
 
@@ -402,6 +404,52 @@ async function exerciseRepository(store) {
 
   return { namespace, agent, configuration, revisionSecret };
 }
+
+test(
+  "PostgreSQL persists a Secret a host Secret Driver issued a reference for",
+  requiresPostgres,
+  async (context) => {
+    // The filesystem Secret Driver stores values as owner-only files. Its backend reference is
+    // not a Kubernetes Secret coordinate, while occ.secrets constrains the reference columns to
+    // exactly those shapes; this case runs the real Driver into the real table so the two
+    // agreed-upon shapes stay compatible.
+    const [
+      { Pool },
+      { PostgresPlatformState },
+      { FilesystemSecretDriver, DRIVER_ID },
+      { mkdtemp, rm },
+    ] = await Promise.all([
+      import("pg"),
+      import("../../packages/occ/src/state/postgres-state.ts"),
+      import("../../apps/controller/src/drivers/secret/filesystem/index.ts"),
+      import("node:fs/promises"),
+    ]);
+    const directory = await mkdtemp(join(tmpdir(), "oce-postgres-filesystem-secret-"));
+    context.after(() => rm(directory, { recursive: true, force: true }));
+    const pool = new Pool({ connectionString: databaseUrl });
+    context.after(() => pool.end());
+    const store = new PostgresPlatformState(pool);
+    await ensureInstallation(store);
+    const driver = new FilesystemSecretDriver({ directory });
+    const namespace = resources().namespace;
+    await store.transact((state) => state.namespaces.createNamespace(namespace));
+
+    const identity = { id: identifier("sec"), namespaceId: namespace.id, name: shortName("login") };
+    const backendRef = await driver.create(identity, "synthetic-secret-value");
+    const stored = {
+      ...identity,
+      driverId: DRIVER_ID,
+      backendRef,
+      createdAt: new Date().toISOString(),
+    };
+    await store.transact((state) => state.secrets.createSecret(stored));
+
+    const read = await store.read((state) => state.secrets.findSecret(namespace.id, identity.id));
+    assert.deepEqual(read?.backendRef, backendRef);
+    // The Driver still resolves the value it issued that reference for.
+    assert.equal(await driver.withValue(stored, async (value) => value), "synthetic-secret-value");
+  },
+);
 
 test("in-memory state persists Secret metadata and binding references without values", async () => {
   const { InMemoryPlatformState } = await import("../../packages/occ/src/state/platform-state.ts");

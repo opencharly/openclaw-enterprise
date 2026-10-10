@@ -298,6 +298,10 @@
                       {
                         "page": "reference/drivers/docker-compute",
                         "label": "Docker and Podman"
+                      },
+                      {
+                        "page": "reference/drivers/containerd-compute",
+                        "label": "Rootless containerd"
                       }
                     ]
                   },
@@ -806,6 +810,10 @@
                     "label": "Kubernetes"
                   },
                   {
+                    "page": "guides/deploy/local-containerd-development",
+                    "label": "containerd"
+                  },
+                  {
                     "page": "testing/developer-skills",
                     "label": "Tools"
                   },
@@ -931,6 +939,7 @@
               "flows/service-api-keys",
               "flows/harness-execution-topology",
               "flows/compute-driver-lifecycle-hooks",
+              "flows/containerd-compute-delivery",
               "flows/openshell-sandbox-provisioning",
               "flows/credential-source-lifecycle",
               "flows/credential-source-refresh",
@@ -957,6 +966,7 @@
               "testing/docker",
               "testing/ssh",
               "testing/kubernetes",
+              "testing/containerd",
               "testing/production-network-access",
               "testing/two-cluster-local",
               "testing/gateway-routing",
