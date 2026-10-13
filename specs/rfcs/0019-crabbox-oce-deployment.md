@@ -27,13 +27,16 @@ on a fresh lease and attach its artifacts and test summary.
 
 ## Motivation
 
-Teams run OpenClaw gateways on rented hosts and want OCE there too, but OCE's
+Teams run OpenClaw on rented hosts and want OCE deployed the same way, but OCE's
 development deployment is local: the
 [Local Setup](../../docs/guides/quickstart.md) guide runs it on a prepared
-workstation and publishes the console on that machine's loopback, so no other
-device can reach it. Nothing re-runs the deployment either. One command that
-deploys OCE onto a machine a team already leases or owns, and publishes the
-console to every device on the tailnet, makes that a routine, repeatable step.
+workstation and publishes the console on that machine's loopback. No other device
+can reach the console, and nothing re-runs a deployment once it has run.
+
+A team with a remote host needs the same functionality there: one command that
+deploys OCE onto a machine it already leases or owns, a console every device on
+the tailnet can open, and a deployment that runs unattended and repeats on demand,
+so it doubles as its own check.
 
 <a id="scope"></a>
 
