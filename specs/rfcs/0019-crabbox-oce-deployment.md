@@ -28,21 +28,22 @@ on a fresh lease and attach its artifacts and test summary.
 ## Motivation
 
 OpenClaw gateways commonly run on rented hosts, and OpenClaw documents deployment
-onto VPS hosts. OCE cannot reach them: its deployment is the local profile in the
-[Local Setup](../../docs/guides/quickstart.md) guide, so an operator prepares a
-workstation and the console is reachable only from that machine — answered today
-by a troubleshooting procedure,
-[Open the console from another machine](../../docs/guides/operate/troubleshooting.md#open-the-console-from-another-machine),
-not by a deployment other devices can use. Nothing re-runs the deployment either,
-and nothing records what it produced.
+onto VPS hosts. OCE offers no way to deploy to one. Its development deployment is
+the local Kubernetes profile in [Local Setup](../../docs/guides/quickstart.md):
+an operator prepares a workstation, runs `./bin/occ dev up`, and the console is
+published on that machine's loopback, so only that machine can reach it. Anyone
+else gets a troubleshooting procedure,
+[Open the console from another machine](../../docs/guides/operate/troubleshooting.md#open-the-console-from-another-machine):
+an SSH forward from a second computer, not a deployment a team can share. Nothing
+re-runs the deployment either, and nothing records what it produced.
 
-Crabbox closes both gaps with machinery it already has: it leases a managed
-machine or an existing one over `ssh`, syncs a checkout, runs commands and
-forwards ports, and its jobs are named, repo-local validation flows, so one
-unattended command leases, hydrates, runs and stops. Crabbox can attach such a
-run's evidence, from required artifacts to a JUnit summary that `crabbox results`
-reads, and Tailscale makes the result reachable from every team member's device
-instead of one workstation.
+An operator with a machine to hand, rented or owned, needs one command that
+deploys OCE onto it and, on a tailnet, publishes the console to every device
+there. Crabbox already supplies that machine: it leases a managed host or takes an
+existing one over `ssh`, syncs a checkout, hydrates prerequisites once per lease,
+runs commands and forwards ports, and its jobs are named, repo-local flows that
+lease, hydrate, run and stop unattended. The same command therefore re-runs a
+deployment, and Crabbox can attach the run's artifacts and a test summary to it.
 
 <a id="scope"></a>
 
@@ -221,15 +222,6 @@ already serve HTTPS certificates for `tailscale serve --https=443`.
   auth key handling and logout, and would bypass `network: tailscale`.
 - **Keep the local profile as the only deployment.** Teams keep preparing a
   workstation by hand, and the console stays on its loopback.
-
-## Unresolved questions
-
-- **Milestone scope.** Deployment behavior is outside the approved milestones in
-  `AGENTS.md`. The responsible maintainers decide whether it enters them, and the
-  plan stays undelivered until then.
-- **The origin shape.** The launcher accepts an `https` Console origin only when
-  it names a port. The launcher owner decides whether the job keeps passing
-  `:443` or the launcher admits a tailnet name without one.
 
 ## References
 
