@@ -9,7 +9,7 @@ author: aitrawog
 - **ID:** RFC-0019
 - **Created:** 2026-10-12
 - **Last updated:** 2026-10-12
-- **RFC PR:** Not yet opened
+- **RFC PR:** [#2](https://github.com/opencharly/openclaw-enterprise/pull/2)
 - **Implementation plan:** None; delivery stays in this RFC
 - **Related:** [Local Kubernetes development](../../docs/guides/deploy/local-kubernetes-development.md)
   and [Crabbox](https://github.com/openclaw/crabbox)
