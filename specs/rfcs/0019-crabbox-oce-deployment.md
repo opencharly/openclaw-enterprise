@@ -19,18 +19,30 @@ author: aitrawog
 ## Summary
 
 `crabbox job run oce-deploy` deploys OCE from the caller's checkout onto any
-machine that [Crabbox](https://github.com/openclaw/crabbox) can lease. Crabbox
-provides the machine, the checkout, and the tools that OCE's scripts expect.
-The existing `scripts/dev-up` does the deployment. With
-`oce-deploy-tailscale`, any device on the tailnet can open the OCE console.
+machine that [Crabbox](https://github.com/openclaw/crabbox) can lease, a rented
+VPS included. Crabbox provides the machine, the checkout, and the tools that
+OCE's scripts expect; the existing `scripts/dev-up` does the deployment. The
+job is unattended and repeatable, so the same command also re-proves the
+deployment on a fresh lease, with the run's required artifacts and test summary
+attached. With `oce-deploy-tailscale`, any device on the tailnet can open the
+OCE console.
 
 ## Motivation
 
-OCE's deployment scripts expect a prepared workstation and serve the console
-only on its loopback. Crabbox can already lease a self-hosted machine, sync a
-checkout, run commands, and forward ports. Combining the two gives a one-step
-deployment on hardware a team already has. Tailscale makes that deployment
-reachable from every team member's device.
+OpenClaw gateways commonly run on a rented host, and OpenClaw documents
+deployment onto VPS hosts. OCE cannot reach those hosts today: its deployment
+scripts expect a prepared workstation and serve the console only on that
+workstation's loopback, so an operator has to prepare the machine by hand and
+can open the console only from the machine itself.
+
+The deployment is manual in the other sense too: nothing re-runs it, and
+nothing records what it produced. Crabbox closes both gaps with machinery it
+already has. It leases a managed machine or an existing one over `ssh`, syncs a
+checkout, runs commands, and forwards ports, and its jobs are named, repo-local
+validation flows: one command leases, hydrates, runs, and stops, and the run
+carries its own evidence, from required artifacts downloaded locally to a JUnit
+summary that `crabbox results` reads. Tailscale then makes the deployment
+reachable from every team member's device instead of one workstation.
 
 <a id="scope"></a>
 
@@ -39,6 +51,8 @@ reachable from every team member's device.
 - One Crabbox job deploys OCE onto a machine that has only Crabbox's
   prerequisites installed.
 - One Crabbox job publishes the OCE console on the tailnet.
+- The deploy job is unattended and repeatable, so a fresh lease re-proves the
+  same deployment instead of one hand-driven run.
 
 ## Non-goals
 
@@ -242,7 +256,10 @@ Delivery status: Planned.
 Required outcomes and evidence: a second device opens
 `https://<machine>.<tailnet>.ts.net/console/` and signs in, while a device
 outside the tailnet cannot reach it; the job refuses to run when Crabbox
-cannot reach the lease over the tailnet; the `oce-tailscale` teardown preset
+cannot reach the lease over the tailnet; the launcher's own API check
+(`OCC_URL=... OCC_SERVICE_KEY_FILE=... ./bin/occ installation get`, which
+`scripts/dev-up` prints when it finishes) answers on the lease, and the run's
+required artifacts come back with it; the `oce-tailscale` teardown preset
 removes the deployment and resets Serve.
 
 Not yet verified: none of this has run. Reading establishes the Crabbox
