@@ -146,15 +146,22 @@ only what executing them needs.
 
 ## Open decisions
 
-- **Milestone scope.** The RFC's Unresolved questions own this, and it gates the
-  whole delivery: `AGENTS.md` keeps deployment behavior outside the approved
-  milestones until a maintainer decides.
+- **Milestone scope.** `AGENTS.md` keeps deployment behavior outside the approved
+  milestones, so a maintainer decides whether this delivery enters them; it
+  gates everything below.
+- **The origin shape.** The launcher accepts an `https` Console origin only when
+  it names a port. The launcher owner decides whether the job keeps passing
+  `:443` or the launcher admits a tailnet name without one.
 - **Whether the workflow installs Docker or asserts it.** Resolve against the
   lease image in use; Crabbox's own Linux builder image already installs Docker
-  and adds the lease user to the group.
+  and adds the lease user to the group. A host outside the Debian family needs
+  its own setup.
 - **Whether `serve --https=443` can obtain a certificate in the target
   tailnet.** The tailnet operator confirms HTTPS certificates are enabled;
   without them Serve has no certificate to terminate with.
+- **A static host's permissions.** On the `ssh` provider, the tailnet operator
+  must already have joined the host, and the lease user needs working `sudo` for
+  `tailscale serve`.
 
 ## Delivery record
 
