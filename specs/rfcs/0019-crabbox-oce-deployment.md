@@ -31,13 +31,13 @@ Users often run OpenClaw on rented hosts and want OCE deployed the same way, but
 OCE's current development deployment is local: the
 [Local Setup](../../docs/guides/quickstart.md) guide runs it on a prepared
 workstation and publishes the console on that machine's loopback. No other device
-can currently reach that console, and nothing re-runs a deployment once it has
-run.
+can currently reach that console, and there is no automatic way to run a
+long-running test deployment.
 
 Those users need the same functionality on a remote host: one command that deploys
 OCE onto a machine they already lease or own, a console every device on the tailnet
-can open, and a deployment that runs unattended and repeats on demand, so it
-doubles as its own check.
+can open, and a long-running test deployment that runs unattended, repeats on
+demand, and doubles as its own check.
 
 <a id="scope"></a>
 
