@@ -171,6 +171,4 @@ Not started.
 
 ## Changelog
 
-- 2026-10-13: Authoring from RFC-0019 and its verification round, against Crabbox `66b66f8` and Enterprise `3d180654c`.
-- 2026-10-13: Rewrite for decision/delivery separation; correct remote-access claims and make TLS, lease reuse, host readiness, cleanup, and remaining proof explicit against the same source baseline and published documentation.
-- 2026-10-13: Resolve all open decisions against Enterprise `3d180654c` and Crabbox `3d9260e7`. Shorten both documents and replace restated RFC content with links.
+- 2026-10-13: Authored against Enterprise `3d180654c` and Crabbox `3d9260e7`.
