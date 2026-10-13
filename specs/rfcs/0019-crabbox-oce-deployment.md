@@ -33,9 +33,10 @@ OpenClaw gateways commonly run on a rented host, and OpenClaw documents
 deployment onto VPS hosts. OCE cannot reach those hosts today. Its deployment is
 the local profile in the [Local Setup](../../docs/guides/quickstart.md) guide:
 an operator prepares a workstation, runs `./bin/occ dev up` there, and
-Kubernetes-only mode publishes the console on that machine's loopback, so
-another computer resolves its `.localhost` hostname to itself. The documented
-answer is a troubleshooting procedure,
+Kubernetes-only mode publishes the console on that machine's loopback under a
+`.localhost` name. A `.localhost` name resolves to loopback on every computer,
+so from any other device it points at that device itself, not at the
+deployment. The documented answer is a troubleshooting procedure,
 [Open the console from another machine](../../docs/guides/operate/troubleshooting.md#open-the-console-from-another-machine),
 not a deployment other devices can use.
 
