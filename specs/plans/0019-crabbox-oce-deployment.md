@@ -26,40 +26,38 @@ only what executing them needs.
 
 ## Contract and source touchpoints
 
-- `.crabbox.yaml` (new, repository root). Crabbox reads `crabbox.yaml` or
-  `.crabbox.yaml` from the checkout; the jobs below are repo-local validation
-  flows, so the deploying command is also the deployment's check.
-- `.github/workflows/crabbox-hydrate.yml` (new). Crabbox's local hydration path
-  runs it over SSH on the lease, so it must declare the inputs Crabbox inspects
+- `.crabbox.yaml` (new, repository root). Crabbox reads either `crabbox.yaml` or
+  `.crabbox.yaml`; a job is a repo-local validation flow, so the deploying
+  command is also the deployment's check.
+- `.github/workflows/crabbox-hydrate.yml` (new). Crabbox's local hydration path runs it
+  over SSH, so it must declare the inputs Crabbox inspects
   and write the readiness marker Crabbox waits for.
 - `internal/occdev/openshell_k3d.go` reads the profile's settings
   (`OCC_DEVELOPMENT_BROWSER_PORT` at `:88`, `OPENCLAW_DEV_PORT` at `:75`),
   builds the installation values (`auth.baseUrl` at `:700`, `agentNativeAdmin`
   at `:701-703`) and prints the console URL at `:388-390`;
   `internal/occdev/keycloak_k3d.go:864-868` validates the Console origin and
-  `:434-437` derives the sign-in redirect host. Those are the touchpoints for
-  the new setting.
+  `:434-437` derives the sign-in redirect host.
 - `docs/reference/settings/development.md:32` and
   `docs/reference/cheatsheets/environment-variables.md:112` own the setting
-  inventories today, so the new variable is recorded there. The launcher change
-  is a runtime change: follow `.agents/skills/local-dev`, including its
-  source-backed flow-doc requirement.
+  inventories, so the new variable is recorded there. The launcher change is a
+  runtime change: follow `.agents/skills/local-dev`, including its flow-doc
+  requirement.
 - Unchanged: `scripts/dev-up`, `scripts/dev-down`, and
   `scripts/ci/setup-tools.sh`.
 
 ## Implementation
 
-1. **Add `OCC_DEVELOPMENT_BROWSER_ORIGIN` to the launcher** (`internal/occdev` owner). Read
-   it beside the existing settings and, when it is set: use the origin as
-   `auth.baseUrl`; use it as the Console origin and as the sign-in redirect host
-   the launcher derives today from `console.<cluster>.oce.localhost`; disable
-   `agentNativeAdmin`; and print `<origin>/console/`. The origin must name a
-   port, because `newDevelopmentConsole` refuses one without it, so the
-   documented value is `https://<machine>.<tailnet>.ts.net:443`. When it is
-   unset, the launcher is unchanged.
-2. **Add `.crabbox.yaml`** with one profile per reachability mode, one teardown
-   preset per profile, and the two deploy jobs. `stop: never` keeps the lease;
-   `crabbox job run --dry-run <job>` prints the expanded plan without leasing.
+1. **Add `OCC_DEVELOPMENT_BROWSER_ORIGIN` to the launcher.** Read it beside the
+   existing settings; when set, it becomes `auth.baseUrl`, the Console origin the
+   launcher checks and the sign-in redirect host it derives today from
+   `console.<cluster>.oce.localhost`, disables `agentNativeAdmin`, and is printed
+   as `<origin>/console/`. It must name a port (`newDevelopmentConsole` refuses
+   one without), so the documented value is
+   `https://<machine>.<tailnet>.ts.net:443`; unset, nothing changes.
+2. **Add `.crabbox.yaml`**: one profile per reachability mode, one teardown preset
+   per profile, two deploy jobs. `stop: never` keeps the lease; `--dry-run` prints
+   the expansion without leasing.
 
    ```yaml
    profiles:
