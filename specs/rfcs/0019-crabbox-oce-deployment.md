@@ -10,7 +10,7 @@ author: aitrawog
 - **Created:** 2026-10-12
 - **Last updated:** 2026-10-13
 - **RFC PR:** [#2](https://github.com/opencharly/openclaw-enterprise/pull/2)
-- **Implementation plan:** None; delivery stays in this RFC
+- **Implementation plan:** [0019-crabbox-oce-deployment](../plans/0019-crabbox-oce-deployment.md)
 - **Related:** [Local Kubernetes development](../../docs/guides/deploy/local-kubernetes-development.md)
   and [Crabbox](https://github.com/openclaw/crabbox)
 
@@ -67,78 +67,31 @@ reachable from every team member's device instead of one workstation.
 
 ### Crabbox deployment
 
-The repository-root `.crabbox.yaml` defines the deployment. Crabbox-specific
-files carry `crabbox` in their name, and objects in `.crabbox.yaml` use the
-`oce-` prefix.
+The repository-root `.crabbox.yaml` defines the deployment; Crabbox reads that
+file from the checkout, and Crabbox-specific files carry `crabbox` in their
+name. It carries two jobs over one pair of profiles: one deploying with
+Crabbox's default reachability, and one that also asserts the path the console
+is published on. Both keep the lease (`stop: never`), take their prerequisites
+from one hydration workflow, and run the same deployment.
 
-```yaml
-profiles:
-  oce:
-    presets:
-      oce-teardown: { command: scripts/dev-down }
-  oce-tailscale:
-    presets:
-      oce-teardown: { shell: true, command: "scripts/dev-down && sudo tailscale serve reset" }
-jobs:
-  oce-deploy: &oce-deploy
-    target: linux
-    profile: oce
-    hydrate: { actions: true }
-    actions: { workflow: .github/workflows/crabbox-hydrate.yml, job: hydrate }
-    shell: true
-    command: corepack pnpm install --frozen-lockfile && corepack pnpm cli:build && scripts/dev-up
-    stop: never
-  oce-deploy-tailscale:
-    <<: *oce-deploy
-    profile: oce-tailscale
-    network: tailscale
-    command: >
-      corepack pnpm install --frozen-lockfile && corepack pnpm cli:build &&
-      sudo tailscale serve --bg --https=443 https+insecure://127.0.0.1:8443 &&
-      OCC_DEVELOPMENT_BROWSER_ORIGIN="https://$(tailscale status --json |
-      yq -p json '.Self.DNSName | sub("\\.$"; "")')" scripts/dev-up
-```
+- `profile: oce` (default reachability) and `profile: oce-tailscale`
+  (`network: tailscale`), each with an `oce-teardown` preset that runs
+  `scripts/dev-down` and, on the tailnet profile, resets Serve;
+- `hydrate: { actions: true }` with
+  `actions: { workflow: .github/workflows/crabbox-hydrate.yml, job: hydrate }`;
+- `command:` the CLI build and `scripts/dev-up`, and on the tailnet job the
+  same command behind `tailscale serve` and `OCC_DEVELOPMENT_BROWSER_ORIGIN`.
 
-The job runs in three steps:
+Prerequisites come from a `workflow_dispatch`-only workflow that declares the
+inputs Crabbox inspects and writes the readiness marker Crabbox waits for, so
+OCE CI never runs it. Because the deployment is a Crabbox job, one command
+leases, hydrates, runs and stops, and `crabbox job run --dry-run <job>` prints
+that expansion without leasing. The file contents, the workflow steps, and the
+ordered work are in the
+[implementation plan](../plans/0019-crabbox-oce-deployment.md).
 
-1. **Lease.** Crabbox leases the machine from the caller's configured
-   provider, and keeps it (`stop: never`). Checkout sync belongs to the
-   hydration and run steps below.
-2. **Prerequisites, once per lease.** Crabbox Actions hydration runs
-   `crabbox-hydrate.yml` on the machine. The workflow has only a
-   `workflow_dispatch` trigger, so OCE CI never runs it, and it declares the
-   `crabbox_id`, `crabbox_runner_label`, and `crabbox_keep_alive_minutes`
-   inputs that Crabbox requires of a workflow it inspects. It installs what
-   OCE's scripts expect but do not install themselves:
-   - Docker, through `apt-get install docker.io` on a lease image without it,
-     with the lease user added to `docker`;
-   - Node.js, through `actions/setup-node` with the version pinned in `ci.yml`;
-   - Go, through a `run:` step that installs the version in `go.mod`: on
-     Crabbox's local hydration path `actions/setup-go` only verifies an
-     installed Go, and fails with "install Go in a run step or prebuild the
-     Crabbox image" when the image has none;
-   - kubectl, k3d, Helm, and yq, through `scripts/ci/setup-tools.sh k3d`.
-
-   Those four tools install into `$RUNNER_TEMP/bin`, which reaches a later
-   Crabbox command only through the env file: Crabbox persists the Node and
-   pnpm tool-cache paths itself, so the workflow also exports the tool
-   directory on `PATH` there. The launcher requires `k3d`, `kubectl`, `helm`,
-   and, with the `none` Sandbox Driver, `node` on `PATH`.
-
-   It then writes Crabbox's readiness marker. Its env file sets the
-   Kubernetes-only `OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes`,
-   `OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes`,
-   `OCC_DEVELOPMENT_SANDBOX_DRIVER=none`, and
-   `OCC_DEVELOPMENT_STATE_DIRECTORY` selections, plus `OCC_URL` and
-   `OCC_SERVICE_KEY_FILE`, for the later Crabbox commands that source it.
-
-3. **Deploy.** Crabbox syncs the checkout, the job builds the CLI, and runs
-   `scripts/dev-up`, as the
-   [local setup](../../docs/guides/quickstart.md) does.
-
-`stop: never` keeps the lease after the job ends. Any Crabbox SSH provider
-works, including `ssh` for an existing host, `proxmox`, `xcp-ng`, `incus`
-virtual machines, `multipass`, `kubevirt`, and `external`.
+Any Crabbox SSH provider works, including `ssh` for an existing host, `proxmox`,
+`xcp-ng`, `incus` virtual machines, `multipass`, `kubevirt`, and `external`.
 
 ### Tailscale access
 
@@ -241,31 +194,24 @@ flowchart TB
 
 ## Delivery and verification
 
-Delivery status: Planned.
-
-1. Add `OCC_DEVELOPMENT_BROWSER_ORIGIN` to the launcher, and record the
-   setting in the development settings reference and the environment-variable
-   cheat sheet.
-2. Add `.crabbox.yaml` and `crabbox-hydrate.yml`.
-3. Verify on a bare VM that has the local Kubernetes profile's storage and
-   free ports (about 20 GB of engine storage, and free 3000, 8443, and 6443):
-   `oce-deploy-tailscale` succeeds, and a second tailnet device opens the
-   console and signs in. Repeat on an existing tailnet host through the `ssh`
-   provider.
+Delivery status: Planned. Delivery is one launcher setting, the repository's
+Crabbox configuration, and the current documentation those touch; the
+[implementation plan](../plans/0019-crabbox-oce-deployment.md) orders the work,
+names its files, and pairs each outcome below with its check.
 
 Required outcomes and evidence: a second device opens
 `https://<machine>.<tailnet>.ts.net/console/` and signs in, while a device
 outside the tailnet cannot reach it; the job refuses to run when Crabbox
 cannot reach the lease over the tailnet; the launcher's own API check
 (`OCC_URL=... OCC_SERVICE_KEY_FILE=... ./bin/occ installation get`, which
-`scripts/dev-up` prints when it finishes) answers on the lease, and the run's
-required artifacts come back with it; the `oce-tailscale` teardown preset
-removes the deployment and resets Serve.
+`scripts/dev-up` prints when it finishes) answers on the lease; the
+`oce-tailscale` teardown preset removes the deployment and resets Serve.
 
 Not yet verified: none of this has run. Reading establishes the Crabbox
 configuration and the launcher's contracts, not that this stack comes up on a
-leased machine; the bare-VM run above is the first proof, and the tailnet must
-already serve HTTPS certificates for `tailscale serve --https=443`.
+leased machine; the bare-VM run on a host with the profile's storage and free
+ports (about 20 GB, and 3000, 8443, 6443) is the first proof, and the tailnet
+must already serve HTTPS certificates for `tailscale serve --https=443`.
 
 <a id="alternatives-and-open-decisions"></a>
 

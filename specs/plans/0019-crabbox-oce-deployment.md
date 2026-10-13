@@ -1,0 +1,158 @@
+---
+rfc: ../rfcs/0019-crabbox-oce-deployment.md
+---
+
+# Implementation plan: deploy OCE with Crabbox and publish the console on a tailnet
+
+- **ID:** RFC-0019 (the primary plan for RFC-0019; it reuses the RFC's number and topic)
+- **Delivery status:** Planned
+- **Owner:** OpenClaw Enterprise deployment configuration and the local launcher (occdev)
+- **Authority:** [RFC-0019: Deploy OCE with Crabbox](../rfcs/0019-crabbox-oce-deployment.md)
+- **Source baseline:** Enterprise `3d180654c`; Crabbox `66b66f8`, the revision every Crabbox contract below was checked against
+
+## Outcome and scope
+
+An operator with a leased or already-rented Linux host runs `crabbox job run
+oce-deploy` from an OCE checkout; the job deploys OCE on that host, and a second
+device on the tailnet opens the console. The job is unattended and re-runnable,
+and the run carries its own evidence.
+
+The deployment stays `scripts/dev-up`, and the only OCE change is one optional
+launcher setting. [RFC-0019](../rfcs/0019-crabbox-oce-deployment.md) owns the
+requirement, the access contract, and the non-goals; this plan adds only what
+executing them needs.
+
+## Contract and source touchpoints
+
+- `.crabbox.yaml` (new, repository root). Crabbox reads `crabbox.yaml` or
+  `.crabbox.yaml` from the checkout; the jobs below are repo-local validation
+  flows, so the deploying command is also the deployment's check.
+- `.github/workflows/crabbox-hydrate.yml` (new). Crabbox's local hydration path
+  runs it over SSH on the lease, so it must declare the inputs Crabbox inspects
+  and write the readiness marker Crabbox waits for.
+- `internal/occdev/openshell_k3d.go` reads the profile's settings
+  (`OCC_DEVELOPMENT_BROWSER_PORT` at `:88`, `OPENCLAW_DEV_PORT` at `:75`),
+  builds the installation values (`auth.baseUrl` at `:700`, `agentNativeAdmin`
+  at `:701-703`) and prints the console URL at `:388-390`;
+  `internal/occdev/keycloak_k3d.go:864-868` validates the Console origin and
+  `:434-437` derives the sign-in redirect host. Those are the touchpoints for
+  the new setting.
+- `docs/reference/settings/development.md:32` and
+  `docs/reference/cheatsheets/environment-variables.md:112` own the setting
+  inventories today, so the new variable is recorded there. The launcher change
+  is a runtime change: follow `.agents/skills/local-dev`, including its
+  source-backed flow-doc requirement.
+- Unchanged: `scripts/dev-up`, `scripts/dev-down`, and
+  `scripts/ci/setup-tools.sh`.
+
+## Implementation
+
+1. **Add `OCC_DEVELOPMENT_BROWSER_ORIGIN` to the launcher** (occdev owner). Read
+   it beside the existing settings and, when it is set: use the origin as
+   `auth.baseUrl`; use it as the Console origin and as the sign-in redirect host
+   the launcher derives today from `console.<cluster>.oce.localhost`; disable
+   `agentNativeAdmin`; and print `<origin>/console/`. The origin must name a
+   port, because `newDevelopmentConsole` refuses one without it, so the
+   documented value is `https://<machine>.<tailnet>.ts.net:443`. When it is
+   unset, the launcher is unchanged.
+2. **Add `.crabbox.yaml`** with one profile per reachability mode, one teardown
+   preset per profile, and the two deploy jobs. `stop: never` keeps the lease;
+   `crabbox job run --dry-run <job>` prints the expanded plan without leasing.
+
+   ```yaml
+   profiles:
+     oce:
+       presets:
+         oce-teardown:
+           command: scripts/dev-down
+     oce-tailscale:
+       presets:
+         oce-teardown:
+           shell: true
+           command: scripts/dev-down && sudo tailscale serve reset
+   jobs:
+     oce-deploy: &oce-deploy
+       target: linux
+       profile: oce
+       hydrate:
+         actions: true
+       actions:
+         workflow: .github/workflows/crabbox-hydrate.yml
+         job: hydrate
+       shell: true
+       command: corepack pnpm install --frozen-lockfile && corepack pnpm cli:build && scripts/dev-up
+       stop: never
+     oce-deploy-tailscale:
+       <<: *oce-deploy
+       profile: oce-tailscale
+       network: tailscale
+       command: >
+         corepack pnpm install --frozen-lockfile && corepack pnpm cli:build &&
+         sudo tailscale serve --bg --https=443 https+insecure://127.0.0.1:8443 &&
+         OCC_DEVELOPMENT_BROWSER_ORIGIN="https://$(tailscale status --json |
+         yq -p json '.Self.DNSName | sub("\\.$"; "")'):443" scripts/dev-up
+   ```
+
+3. **Add `crabbox-hydrate.yml`.** `on: workflow_dispatch` only, declaring
+   `crabbox_id`, `crabbox_runner_label` and `crabbox_keep_alive_minutes` (plus
+   `crabbox_job`, defaulting to `hydrate`). Steps, in order:
+
+   - install Docker only when the image lacks it (`command -v docker`), through
+     `apt-get install docker.io` on the Debian-family images the managed leases
+     use, with the lease user added to `docker`;
+   - `actions/setup-node` with `24.16.0`, the version pinned in `ci.yml`;
+   - install the `go.mod` Go (1.27) in a `run:` step: on Crabbox's local
+     hydration path `actions/setup-go` only verifies an installed Go;
+   - `scripts/ci/setup-tools.sh k3d` for kubectl, k3d, Helm and yq;
+   - write the readiness marker `$HOME/.crabbox/actions/<lease>.env` and an
+     `ENV_FILE` carrying `OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes`,
+     `OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes`,
+     `OCC_DEVELOPMENT_SANDBOX_DRIVER=none`,
+     `OCC_DEVELOPMENT_STATE_DIRECTORY=/var/tmp/oce-dev` (durable, unlike the
+     temporary default), `OPENCLAW_DEV_PORT=3000`,
+     `OCC_URL=http://127.0.0.1:3000`,
+     `OCC_SERVICE_KEY_FILE=/var/tmp/oce-dev/initial-admin-service-key.json`, and
+     `export PATH="$RUNNER_TEMP/bin:$PATH"`. That `PATH` export is what carries
+     kubectl, k3d, Helm and yq to the deploy command: Crabbox persists only the
+     Node and pnpm tool-cache paths itself.
+   - keep the job alive for GitHub-runner hydration, and exit immediately on
+     the local path.
+
+4. **Record the setting** in `docs/reference/settings/development.md` and in the
+   [environment-variable cheat sheet](../../docs/reference/cheatsheets/environment-variables.md),
+   and update the flow page that owns the local launcher's behavior, as
+   `.agents/skills/local-dev` requires.
+
+## Verification
+
+| Required outcome                                                                                                                            | Real check and prerequisites                                                                                                                                                                       | Result or remaining proof |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| The deploy job completes the profile on a fresh Linux lease                                                                                 | `crabbox job run oce-deploy` on a bare VM with the profile's storage and free ports (about 20 GB, 3000/8443/6443)                                                                                  | Not run                   |
+| A second tailnet device opens the console and signs in                                                                                      | `crabbox job run oce-deploy-tailscale`, then `https://<machine>.<tailnet>.ts.net/console/` from another device; the tailnet needs HTTPS certificates for `serve --https=443`                       | Not run                   |
+| A device outside the tailnet cannot reach the console                                                                                       | The same run, then a device without tailnet access                                                                                                                                                 | Not run                   |
+| The job refuses a machine Crabbox cannot reach over the tailnet                                                                             | `network: tailscale` with an unreachable lease                                                                                                                                                     | Not run                   |
+| The launcher's own API check answers on the lease                                                                                           | `OCC_URL=… OCC_SERVICE_KEY_FILE=… ./bin/occ installation get`, the command `scripts/dev-up` prints                                                                                                 | Not run                   |
+| Teardown removes the deployment and resets Serve                                                                                            | The profile's `oce-teardown` preset, then `crabbox stop`                                                                                                                                           | Not run                   |
+| The setting changes `auth.baseUrl`, the Console origin, the redirect host and the printed URL, and leaves the launcher unchanged when unset | Extend the occdev launcher tests (`internal/occdev/keycloak_k3d_test.go` asserts the installation values today) and the real-cluster lane (`tests/integration/dev-up-openshell-k3d-real.test.mjs`) | Not run                   |
+
+## Open decisions
+
+- **Whether the workflow installs Docker or asserts it.** Resolve against the
+  lease image in use; Crabbox's own Linux builder image already installs Docker
+  and adds the lease user to the group.
+- **Whether `serve --https=443` can obtain a certificate in the target
+  tailnet.** The tailnet operator confirms HTTPS certificates are enabled;
+  without them Serve has no certificate to terminate with.
+
+## Delivery record
+
+Not started. Record the implementation PR, the checks above with their results
+and limits, and the updated documentation links here as the work proceeds.
+
+## Manual Notes
+
+[keep this for the user to add notes. do not change between edits]
+
+## Changelog
+
+- 2026-10-13: Authoring from RFC-0019 and its verification round, against Crabbox `66b66f8` and Enterprise `3d180654c`.
