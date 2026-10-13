@@ -252,7 +252,8 @@ must already serve HTTPS certificates for `tailscale serve --https=443`.
   [Open the console from another machine](../../docs/guides/operate/troubleshooting.md#open-the-console-from-another-machine)
 - [`scripts/dev-up`](../../scripts/dev-up) and
   [`scripts/ci/setup-tools.sh`](../../scripts/ci/setup-tools.sh)
-- Crabbox [jobs](https://github.com/openclaw/crabbox/blob/main/docs/features/jobs.md),
+- Crabbox: [repository](https://github.com/openclaw/crabbox),
+  [jobs](https://github.com/openclaw/crabbox/blob/main/docs/features/jobs.md),
   [Actions hydration](https://github.com/openclaw/crabbox/blob/main/docs/features/actions-hydration.md),
   and [configuration](https://github.com/openclaw/crabbox/blob/main/docs/features/configuration.md)
 - [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve)

@@ -8,7 +8,7 @@ rfc: ../rfcs/0019-crabbox-oce-deployment.md
 - **Delivery status:** Planned
 - **Owner:** OpenClaw Enterprise deployment configuration and the local launcher (occdev)
 - **Authority:** [RFC-0019: Deploy OCE with Crabbox](../rfcs/0019-crabbox-oce-deployment.md)
-- **Source baseline:** Enterprise `3d180654c`; Crabbox `66b66f8`, the revision every Crabbox contract below was checked against
+- **Source baseline:** Enterprise `3d180654c`; [Crabbox](https://github.com/openclaw/crabbox) `66b66f8`, the revision every Crabbox contract below was checked against
 
 ## Outcome and scope
 
