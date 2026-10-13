@@ -58,7 +58,7 @@ Each goal is required; the plan maps it to implementation and verification.
 4. Reject an invalid origin or unsupported profile before launcher deployment
    effects, through every startup entry point. Unset behavior stays unchanged.
 5. Remove only the owned installation and Serve publication. On any failed
-   deployment, including post-start checks, remove the owned publication and
+   deployment, including publication checks, remove the owned publication and
    report surviving installation state. Preserve recovery records and the lease
    on cleanup failure, subject to the lease's expiry policy.
 6. Keep credential values out of logs and artifacts.
@@ -139,12 +139,11 @@ untrusted forwarded headers without adding proxy trust or skipping a certificate
 check. The local HTTPS console on port 8443 remains available to the base job's
 SSH-tunnel procedure.
 
-The job must refuse an existing conflicting Serve listener or Funnel publication
-on port 443. Record the exact owned TCP configuration before mutation, reconcile
-uncertain results against live status, and remove it only while it still matches.
-Preserve unrelated configuration and operator replacements. Serialize OCE job
-operations on the host; concurrent external Serve edits are unsupported during
-those operations.
+The job must refuse conflicting Serve or Funnel configuration on port 443,
+preserve unrelated configuration and operator replacements, and remove only its
+own matching publication. Interrupted or uncertain operations must leave enough
+information for safe recovery. The plan owns delivery; record formats and shell
+mechanics are implementation choices.
 
 ### Lifecycle
 
@@ -161,15 +160,19 @@ sequenceDiagram
   alt Host unsupported
     Script-->>Caller: Refuse before OCE host preparation
   else Host prepared
-    Script->>Script: Validate origin and Serve ownership, record publication intent
-    Script->>Script: Configure TLS-terminated TCP forwarding
+    Script->>Script: Validate origin and check publication conflicts
     Script->>Launcher: Start existing profile with external origin
-    alt Launcher and post-start checks succeed
-      Launcher-->>Script: Ready, private credential paths
-      Script-->>Caller: API and HTTPS checks pass, console URL
-    else Any deployment stage fails
-      Script->>Script: Remove matching owned publication, inspect installation state
-      Script-->>Caller: Failed stage, cleanup result, and recovery command
+    alt Launcher fails
+      Launcher-->>Caller: Failure and existing rollback/recovery result
+    else Launcher succeeds
+      Launcher-->>Script: Authenticated API and Namespace checks passed
+      Script->>Script: Configure owned TCP publication
+      alt Publication and HTTPS check succeed
+        Script-->>Caller: Console URL and existing credential paths
+      else Publication fails
+        Script->>Script: Remove matching owned publication
+        Script-->>Caller: Failure, cleanup result, retained installation
+      end
     end
   end
 ```
@@ -181,6 +184,11 @@ redeploying on that lease. Otherwise release follows successful removal of both
 owned resources. Cleanup failure retains recovery records and suppresses release.
 
 ## Delivery and verification
+
+The wrapper reuses launcher validation, authenticated readiness, state ownership,
+and rollback. Publish Serve only after startup succeeds; failures before that
+point create no publication to clean up. Reuse existing tool installers and
+Crabbox's retained environment rather than adding parallel setup mechanisms.
 
 The [plan](../plans/0019-crabbox-oce-deployment.md) owns concrete changes and the
 check for each goal. Nothing is implemented or runtime-qualified yet. Source
