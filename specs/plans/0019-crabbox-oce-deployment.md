@@ -8,105 +8,140 @@ rfc: ../rfcs/0019-crabbox-oce-deployment.md
 - **Delivery status:** Planned
 - **Owner:** OCE deployment and development-launcher contributors
 - **Authority:** [RFC-0019](../rfcs/0019-crabbox-oce-deployment.md)
-- **Source baseline:** Enterprise `3d180654c`; Crabbox `3d9260e7`
+- **Source baseline:** Enterprise `3d180654c`; Crabbox `3d9260e7`; Tailscale `v1.104.1`
 
 ## Outcome and scope
 
-This plan delivers the RFC's [goals](../rfcs/0019-crabbox-oce-deployment.md#goals),
-using the files and owners listed in its
-[proposal](../rfcs/0019-crabbox-oce-deployment.md#proposal). Work starts once the
-RFC is accepted.
+Deliver the RFC's [goals](../rfcs/0019-crabbox-oce-deployment.md#goals) through
+its selected local profile and unchanged OCE authentication. Implementation
+starts after responsible maintainers accept the RFC and its deployment scope.
 
 ## Contract and source touchpoints
 
-The script owns `$HOME/.oce-crabbox/` (mode `0700`):
+`scripts/crabbox/oce-dev` owns `$HOME/.oce-crabbox/` (mode `0700`): launcher
+`state/`, non-secret toolchain `env`, publication recovery record `serve`, and
+an operation lock. Hydration creates the parent, not the launcher's state directory.
 
-- `state/` is the launcher's state directory.
-- `env` holds the non-secret `PATH` that hydration writes.
-- `serve` records the Serve handler the script created.
+The script sources tool paths and sets this environment itself for startup,
+checks, and teardown. Reject conflicting inherited profile/port/state settings;
+the base job must not inherit a browser-origin override.
 
-The script exports the Kubernetes-only profile itself instead of relying on
-Crabbox's per-lease environment file. As a result, teardown works without
-hydration.
+```text
+OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes
+OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes
+OCC_DEVELOPMENT_SANDBOX_DRIVER=none
+OCC_DEVELOPMENT_CONTAINER_ENGINE=docker
+OCC_DEVELOPMENT_STATE_DIRECTORY=$HOME/.oce-crabbox/state
+OPENCLAW_DEV_PORT=3000
+OCC_DEVELOPMENT_BROWSER_PORT=8443
+OCC_DEVELOPMENT_KUBERNETES_API_PORT=6443
+OCC_URL=http://127.0.0.1:3000
+OCC_SERVICE_KEY_FILE=$HOME/.oce-crabbox/state/initial-admin-service-key.json
+```
+
+Expand `$HOME` when exporting; keep `OCC_DEVELOPMENT_SIGN_IN` empty. Only the
+Tailscale job sets the derived browser origin. Pass the service-key file path,
+never its contents, to checks. Teardown does not require hydration.
 
 ## Implementation
 
 ### 1. Launcher setting
 
-Implement the RFC's [console origin](../rfcs/0019-crabbox-oce-deployment.md#console-origin)
-contract in [`openshell_k3d.go`](../../internal/occdev/openshell_k3d.go). Read the
-setting before any effect. Reject it, naming the setting in the error, in two
-cases:
+Implement the [origin contract](../rfcs/0019-crabbox-oce-deployment.md#console-origin-and-authentication)
+through `internal/occdev`, `internal/occcli/dev.go`, and `scripts/dev-up`.
+Validate at the shared Go startup boundary before profile dispatch; also guard
+the shell startup entry point so Docker/Compose cannot silently ignore the setting.
+Direct `occdev.Up` calls must enforce the same contract.
 
-- the value has a path other than `/`, a query, a fragment, or user info; or
-- the profile is unsupported, including when `OCC_DEVELOPMENT_SIGN_IN` is set.
+Require HTTPS, a valid nonempty host, and an absent or valid port. Reject
+whitespace/control characters, malformed URLs, user info, query, fragment,
+non-root paths, and unsupported profiles/sign-in. Normalize the root slash and
+default port before writing `auth.baseUrl` in `openshell_k3d.go`; omit native
+admin and update the printed URL. Keep the unset path unchanged. Do not change
+proxy trust or authentication rules.
 
-Add unit tests for validation, Helm values with and without the setting, and
-the printed output.
+Cover validation before effects, unsupported entry paths, normalized Helm values,
+native admin, and printed output with meaningful launcher checks.
 
 ### 2. Toolchain profile
 
-Add a `crabbox` profile to [`setup-tools.sh`](../../scripts/ci/setup-tools.sh).
-It runs `require_docker` and the existing kubectl, k3d, Helm, and yq
-installers. It also runs a new `install_go`, because local `actions/setup-go`
-only verifies a Go that is already installed. `install_go` pins the newest Go
-1.27 patch for `linux-amd64` and verifies its SHA-256 through
-`download-pinned.sh`.
+Add `crabbox` to [`setup-tools.sh`](../../scripts/ci/setup-tools.sh):
+`require_docker`, kubectl, k3d, Helm, yq, and explicit Go installation. Local
+`actions/setup-go` only checks an installed Go. Pin an exact supported Go 1.27
+patch and linux-amd64 SHA-256 through `download-pinned.sh`; persist its bin path.
 
 ### 3. Hydration workflow
 
-Write `.github/workflows/crabbox-hydrate.yml` to Crabbox's
-[hydrate-workflow contract](https://github.com/openclaw/crabbox/blob/3d9260e7a37e025ed36b3c38fbcf1ae50e4a3520/docs/features/actions-hydration.md#authoring-a-hydrate-workflow),
-with a `workflow_dispatch` trigger only. The workflow runs these steps in order:
+Create `.github/workflows/crabbox-hydrate.yml` using the pinned Crabbox
+[workflow contract](https://github.com/openclaw/crabbox/blob/3d9260e7a37e025ed36b3c38fbcf1ae50e4a3520/docs/features/actions-hydration.md#authoring-a-hydrate-workflow)
+and `workflow_dispatch` only. Declare required inputs and marker fields from
+that contract; local hydration exits immediately after readiness.
 
-1. **Check the host before changing it.** Refuse a host that does not match the
-   [supported hosts](../rfcs/0019-crabbox-oce-deployment.md#hosts-and-lifetime)
-   (`/etc/os-release`, `uname -m`). Also refuse it if `sudo -n true` fails,
-   `cpuset` is missing from the cgroup v2 controllers, or `/var/lib` has less
-   free space than the [Local Setup](../../docs/guides/quickstart.md#before-you-start)
-   storage requirement.
-2. **Prepare the host.** Install any missing `docker.io`, `docker-buildx`,
-   `jq`, `curl`, and `git` packages, and add the user to the `docker` group.
-   Persist the Codex sandbox sysctl in `/etc/sysctl.d/60-oce-development.conf`.
-   Print each change.
-3. **Install Node.js.** Run `actions/setup-node` with the `NODE_VERSION` from
-   `.github/workflows/ci.yml`. Corepack then provides pnpm.
-4. **Install the toolchain.** Run `setup-tools.sh crabbox` under `sg docker`,
-   because the new group membership does not reach the current session.
-5. **Mark the host ready.** Write `env`, then write Crabbox's environment file
-   and readiness marker.
+1. Before OCE package/sysctl changes, verify Ubuntu 24.04/26.04, amd64,
+   noninteractive sudo, cgroup-v2 `cpuset`, and required storage. Check the actual
+   Docker data filesystem when already installed, otherwise `/var/lib`. Refuse
+   unsupported hosts; Crabbox bootstrap/sync has already occurred.
+2. Install missing `docker.io`, `docker-buildx`, `jq`, `curl`, and `git`;
+   enable working Docker daemon access and add the user to `docker`. Persist
+   the documented Codex sysctl at `/etc/sysctl.d/60-oce-development.conf`.
+   Print changes; teardown leaves host preparation in place.
+3. Use `actions/setup-node` with the CI-pinned `NODE_VERSION`, declared in this
+   workflow too. Verify Corepack and the repository-pinned pnpm are usable.
+4. Run `setup-tools.sh crabbox` under `sg docker` for new group membership.
+5. Write the private parent and non-secret toolchain `env`, then Crabbox's
+   environment and readiness marker only after setup succeeds.
 
-### 4. `scripts/crabbox/oce-dev`
+### 4. Deployment script
 
-Every failure prints `oce-dev: <stage> failed: <reason>`. If the Docker socket
-denies access, the script reruns itself under `sg docker`.
+Every failure names its stage and reason. Serialize `up`/`down`; retry a Docker
+permission failure under `sg docker` at most once. Unsupported Serve versions
+or status formats fail before mutation. Qualify the selected TCP mode against
+Tailscale `v1.104.1`; later versions require equivalent behavior checks.
 
 `up [--tailscale]`:
 
-1. Source `env`. If `state/` already exists, fail and print the teardown
-   command.
-2. With `--tailscale`, read `Self.DNSName` from `tailscale status --json` and
-   drop its trailing dot. Require a `*.ts.net` name that appears in
-   `CertDomains`. Then add the RFC's Serve handler and record it in `serve`.
-3. Run `corepack pnpm install --frozen-lockfile`, `corepack pnpm cli:build`,
-   and `scripts/dev-up`. If any step fails, remove the handler and exit with
-   that step's status.
-4. Run `bin/occ installation get` against `http://127.0.0.1:3000`. With
-   `--tailscale`, also retry `curl --fail https://<name>/console/` for up to two
-   minutes, because the first request provisions the certificate.
+1. Source tool paths, validate the fixed environment, and refuse existing
+   launcher state or an unresolved publication record with a recovery command.
+   Require free loopback ports 3000, 8443, and 6443 before adding a publication.
+2. With Tailscale, trim `Self.DNSName` and require the resulting `*.ts.net` name
+   in `CertDomains`. Check `tailscale serve status --json` for TCP/HTTP/Funnel
+   conflicts on 443. Refuse existing configuration rather than adopt or overwrite it.
+3. Write a mode-`0600`, atomic intent record with the exact host, port, TCP target,
+   and shutdown flags before configuring the RFC's
+   [TCP publication](../rfcs/0019-crabbox-oce-deployment.md#tailnet-publication).
+   Install cleanup handling first. Read back status after configuration; resolve
+   an uncertain outcome from live configuration, not a repeated mutation.
+4. Install locked dependencies, build the CLI, and call `scripts/dev-up`.
+5. Using the explicit URL/key environment, require `bin/occ installation get`
+   and a ready initial Namespace. With Tailscale, retry certificate-validated
+   `curl --fail https://<name>/console/` for two minutes. This checks publication,
+   not authentication; remote authenticated API proof remains in verification.
 
-`down` attempts both of the following, reports both results, and exits non-zero
-if either fails. With nothing to remove, it exits `0`.
+Every failure after publication intent, including checks, INT/TERM, and failed
+record updates, attempts bounded cleanup of only the matching owned publication.
+Keep the original failure status and report cleanup separately. If startup left
+an installation, report its state and `down` command; do not silently delete it
+when a post-start check fails. Uncatchable interruption leaves the durable intent
+for reconciliation on the next operation. Erase the record only after verified
+removal or confirmed absence.
 
-- Remove the recorded handler by rerunning its command with `off`.
-- If `state/` exists, run `scripts/dev-down`, building `bin/occ` first if it is
-  missing.
+`down` attempts publication and installation cleanup independently. Compare live
+port-443 configuration with the record before invoking:
+
+```sh
+sudo tailscale serve --bg --tls-terminated-tcp=443 tcp://127.0.0.1:3000 off
+```
+
+Do not remove an operator replacement or unrelated handler; report drift as a
+cleanup failure. Configuration edits by other tools during OCE operations are
+unsupported. If launcher state exists, run `scripts/dev-down`, building the CLI
+if necessary. Preserve failed-cleanup state/records. Exit nonzero on either
+failure, and zero only when both owned resources are absent.
 
 ### 5. Jobs
 
-Verify `.crabbox.yaml` with `crabbox job list` and `crabbox job run --dry-run`.
-If Crabbox rejects the YAML merge key, write the Tailscale job out in full. The
-caller's configuration selects the provider.
+The caller selects the provider. Validate the jobs with `job list` and dry-run;
+the merge key is supported by Crabbox's YAML parser.
 
 ```yaml
 jobs:
@@ -132,34 +167,41 @@ jobs:
     stop: success
 ```
 
+Require `crabbox job run --id <lease> oce-teardown`; no ID would allocate a new
+lease. For reuse, run `crabbox job run --id <lease> --stop never oce-teardown`,
+then the deploy job with the same ID. Record effective lifetime/policy clamping;
+static hosts provide persistent use. Declare no credential-bearing artifacts.
+
 ### 6. Documentation
 
-- Add the setting to the [development settings](../../docs/reference/settings/development.md)
-  and the [environment-variable cheat sheet](../../docs/reference/cheatsheets/environment-variables.md).
-- Add `docs/guides/deploy/crabbox-development.md` and register it in
-  [`docs.json`](../../docs/docs.json). The guide covers the job commands, the
-  caller's [Crabbox Tailscale setup](https://github.com/openclaw/crabbox/blob/3d9260e7a37e025ed36b3c38fbcf1ae50e4a3520/docs/features/tailscale.md),
-  lease reuse, and reading credentials through `crabbox ssh`. It links the RFC
-  for supported hosts and lifetime.
-- Link the guide from local Kubernetes development and from the remote-console
-  troubleshooting section.
-- Add `.crabbox.yaml` and `scripts/crabbox/` to the [repository layout](../../docs/layout.md).
-- Add a flow as the [local-dev](../../.agents/skills/local-dev/SKILL.md) skill
-  directs.
+Update the development setting reference and environment-variable cheat sheet.
+Add `docs/guides/deploy/crabbox-development.md`, register it in `docs.json`, and
+link it from local development and remote-console troubleshooting. Document
+current supported hosts/profile, certificate preparation, unchanged local login,
+private credential retrieval through SSH, lease identity/lifetime, recovery,
+and destructive teardown. Keep those current procedures in the guide.
+
+Update `docs/layout.md` for `.crabbox.yaml` and `scripts/crabbox/`, and the owning
+launcher flow under `docs/flows/` as [local-dev](../../.agents/skills/local-dev/SKILL.md)
+requires. Update RFC implementation status and index together only with evidence.
 
 ## Verification
 
-| Goal | Check                                                                                                                                                                 | Result  |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| 1    | Run `oce-deploy` on a fresh managed lease and on a static Ubuntu 24.04 host, recording provider and class. Run it again on a non-Ubuntu host.                         | Not run |
-| 2    | After `oce-deploy-tailscale`, a second device signs in and lists a resource. Repeat with a policy-denied device, an off-tailnet device, and `curl` without a session. | Not run |
-| 3    | Run the job against a host Crabbox cannot reach over the tailnet, and on a tailnet with HTTPS certificates disabled.                                                  | Not run |
-| 4    | Unit tests from step 1. The real k3d lane signs in through `127.0.0.1:8443` with the configured `Origin`, and existing tests pass with the setting unset.             | Not run |
-| 5    | Redeploy on a used lease, then tear down with `--stop never` and redeploy. Force `dev-down` to fail and inspect the Serve configuration and the lease.                | Not run |
-| 6    | Search the job output and Crabbox logs for password and key contents.                                                                                                 | Not run |
+All checks are planned, not run. Exercise the implemented revision and record
+commands, host/image/provider, Tailscale version, results, and missing prerequisites.
 
-A fixture test with stub `tailscale` and `occ` commands covers the step
-ordering in `oce-dev`. It does not replace the remote checks.
+| RFC goal | Required implementation proof                                                                                                                                                                                                                                                                                                                              |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1        | Fresh managed and static hosts covering Ubuntu 24.04 and 26.04 amd64: launcher readiness, authenticated Installation read, ready Namespace. Refuse wrong OS/architecture, missing sudo/cpuset/storage, occupied ports, and conflicting environment before OCE setup/publication.                                                                           |
+| 2        | A permitted second device loads login unauthenticated, signs in with ordinary OCE credentials, lists a protected resource, and logs out. Compare missing-session and missing-permission behavior with local setup. Denied/off-tailnet devices cannot connect. Confirm injected forwarded headers remain rejected and normal TCP-forwarded requests work.   |
+| 3        | Refuse unreachable tailnet SSH and missing certificate eligibility. Fail certificate issuance/HTTPS checks and verify publication cleanup and reported installation state.                                                                                                                                                                                 |
+| 4        | Shared-entry validation and unset regressions; real k3d sign-in and protected API operations with the configured Origin. For local HTTPS proof, retain the development certificate's hostname/SNI while dialing loopback. Verify TLS-terminated TCP behavior against the selected Tailscale version.                                                       |
+| 5        | Reuse with explicit lease ID; retain/redeploy using `--stop never`. Check conflicting/replaced Serve configuration, uncertain mutation, INT/TERM, interruption recovery, failed post-start checks, and independent removal failures. Preserve unrelated settings, records, and lease on cleanup failure; verify successful cleanup and release separately. |
+| 6        | Inspect job/Crabbox logs and artifact configuration for password, service-key, and CA-private-key values; keep state out of artifacts.                                                                                                                                                                                                                     |
+
+Stub script checks may cover ordering and failure paths; they do not replace
+real k3d, host, browser, and tailnet proof. Required unrun checks keep delivery
+incomplete. Use documentation checks, without product tests, for this proposal.
 
 ## Delivery record
 
@@ -172,3 +214,4 @@ Not started.
 ## Changelog
 
 - 2026-10-13: Authored against Enterprise `3d180654c` and Crabbox `3d9260e7`.
+- 2026-10-13: Align all RFC goals with concrete steps/checks; preserve local authentication, select header-free TCP publication, and specify credential inputs, validation, ownership, and failure recovery (Tailscale `v1.104.1`).
