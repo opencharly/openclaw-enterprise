@@ -6,7 +6,7 @@ rfc: ../rfcs/0019-crabbox-oce-deployment.md
 
 - **ID:** RFC-0019 (the primary plan for RFC-0019; it reuses the RFC's number and topic)
 - **Delivery status:** Planned
-- **Owner:** OpenClaw Enterprise deployment configuration and the local launcher (occdev)
+- **Owner:** OpenClaw Enterprise deployment configuration and the local launcher (`internal/occdev`)
 - **Authority:** [RFC-0019: Deploy OCE with Crabbox](../rfcs/0019-crabbox-oce-deployment.md)
 - **Source baseline:** Enterprise `3d180654c`; [Crabbox](https://github.com/openclaw/crabbox) `66b66f8`, the revision every Crabbox contract below was checked against
 
@@ -15,7 +15,7 @@ rfc: ../rfcs/0019-crabbox-oce-deployment.md
 An operator with a leased or already-rented Linux host runs `crabbox job run
 oce-deploy` from an OCE checkout; the job deploys OCE on that host, and a second
 device on the tailnet opens the console. The job is unattended and re-runnable,
-and the run carries its own evidence.
+and Crabbox can attach the run's artifacts and test summary to it.
 
 The deployment stays `scripts/dev-up` — the profile
 [Local Setup](https://docs-enterprise.openclaw.org/guides/quickstart/)
@@ -49,7 +49,7 @@ only what executing them needs.
 
 ## Implementation
 
-1. **Add `OCC_DEVELOPMENT_BROWSER_ORIGIN` to the launcher** (occdev owner). Read
+1. **Add `OCC_DEVELOPMENT_BROWSER_ORIGIN` to the launcher** (`internal/occdev` owner). Read
    it beside the existing settings and, when it is set: use the origin as
    `auth.baseUrl`; use it as the Console origin and as the sign-in redirect host
    the launcher derives today from `console.<cluster>.oce.localhost`; disable
@@ -95,19 +95,26 @@ only what executing them needs.
          yq -p json '.Self.DNSName | sub("\\.$"; "")'):443" scripts/dev-up
    ```
 
+   The deploy writes no JUnit XML today and the state directory holds
+   credentials, so neither job declares `junit:`, `artifactGlobs:` or
+   `requiredArtifacts:` yet. Add them for any non-secret output a later check
+   produces, and keep the state directory out of the artifact globs.
+
 3. **Add `crabbox-hydrate.yml`.** `on: workflow_dispatch` only, declaring
    `crabbox_id`, `crabbox_runner_label` and `crabbox_keep_alive_minutes` (plus
    `crabbox_job`, defaulting to `hydrate`). Steps, in order:
 
-   - install Docker only when the image lacks it (`command -v docker`), through
-     `apt-get install docker.io` on the Debian-family images the managed leases
-     use, with the lease user added to `docker`;
+   - install Docker as root (`sudo`) only when the image lacks it
+     (`command -v docker`), through `apt-get install docker.io` on the
+     Debian-family images the managed leases use, with the lease user added to
+     `docker`;
    - `actions/setup-node` with `24.16.0`, the version pinned in `ci.yml`;
    - install the `go.mod` Go (1.27) in a `run:` step: on Crabbox's local
      hydration path `actions/setup-go` only verifies an installed Go;
    - `scripts/ci/setup-tools.sh k3d` for kubectl, k3d, Helm and yq;
-   - write the readiness marker `$HOME/.crabbox/actions/<lease>.env` and an
-     `ENV_FILE` carrying `OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes`,
+   - write Crabbox's readiness marker `$HOME/.crabbox/actions/<lease>.env`, which
+     points `ENV_FILE` at a sourced env file that carries
+     `OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes`,
      `OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes`,
      `OCC_DEVELOPMENT_SANDBOX_DRIVER=none`,
      `OCC_DEVELOPMENT_STATE_DIRECTORY=/var/tmp/oce-dev` (durable, unlike the
@@ -134,11 +141,14 @@ only what executing them needs.
 | A device outside the tailnet cannot reach the console                                                                                       | The same run, then a device without tailnet access                                                                                                                                                                 | Not run                   |
 | The job refuses a machine Crabbox cannot reach over the tailnet                                                                             | `network: tailscale` with an unreachable lease                                                                                                                                                                     | Not run                   |
 | The launcher's own API check answers on the lease                                                                                           | `OCC_URL=… OCC_SERVICE_KEY_FILE=… ./bin/occ installation get`, the check [Local Setup](../../docs/guides/quickstart.md#read-the-installation-with-the-bootstrap-service-key) documents and `scripts/dev-up` prints | Not run                   |
-| Teardown removes the deployment and resets Serve                                                                                            | The profile's `oce-teardown` preset, then `crabbox stop`                                                                                                                                                           | Not run                   |
-| The setting changes `auth.baseUrl`, the Console origin, the redirect host and the printed URL, and leaves the launcher unchanged when unset | Extend the occdev launcher tests (`internal/occdev/keycloak_k3d_test.go` asserts the installation values today) and the real-cluster lane (`tests/integration/dev-up-openshell-k3d-real.test.mjs`)                 | Not run                   |
+| Teardown removes the deployment and resets Tailscale Serve                                                                                  | The profile's `oce-teardown` preset, then `crabbox stop`                                                                                                                                                           | Not run                   |
+| The setting changes `auth.baseUrl`, the Console origin, the redirect host and the printed URL, and leaves the launcher unchanged when unset | Extend the launcher tests in `internal/occdev` (`internal/occdev/keycloak_k3d_test.go` asserts the installation values today) and the real-cluster lane (`tests/integration/dev-up-openshell-k3d-real.test.mjs`)   | Not run                   |
 
 ## Open decisions
 
+- **Milestone scope.** The RFC's Unresolved questions own this, and it gates the
+  whole delivery: `AGENTS.md` keeps deployment behavior outside the approved
+  milestones until a maintainer decides.
 - **Whether the workflow installs Docker or asserts it.** Resolve against the
   lease image in use; Crabbox's own Linux builder image already installs Docker
   and adds the lease user to the group.

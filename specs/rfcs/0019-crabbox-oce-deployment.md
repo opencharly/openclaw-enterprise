@@ -18,14 +18,14 @@ author: aitrawog
 
 ## Summary
 
-`crabbox job run oce-deploy` deploys OCE from the caller's checkout onto any
-machine that [Crabbox](https://github.com/openclaw/crabbox) can lease, a rented
-VPS included. Crabbox provides the machine, the checkout, and the tools that
-OCE's scripts expect; the existing `scripts/dev-up` does the deployment. The
-job is unattended and repeatable, so the same command also re-proves the
-deployment on a fresh lease, with the run's required artifacts and test summary
-attached. With `oce-deploy-tailscale`, any device on the tailnet can open the
-OCE console.
+`crabbox job run oce-deploy` deploys OpenClaw Enterprise (OCE) from the caller's
+checkout onto any machine that [Crabbox](https://github.com/openclaw/crabbox)
+can lease, a rented VPS included. Crabbox provides the machine, the checkout,
+and the tools that OCE's scripts expect; the existing `scripts/dev-up` does the
+deployment. The job is unattended and repeatable, so the same command re-proves
+the deployment on a fresh lease, and Crabbox can attach the run's artifacts and
+a test summary when the command produces them. With `oce-deploy-tailscale`, any
+device on the tailnet can open the OCE console.
 
 ## Motivation
 
@@ -75,21 +75,14 @@ file from the checkout, and Crabbox-specific files carry `crabbox` in their
 name. It carries two jobs over one pair of profiles: one deploying with
 Crabbox's default reachability, and one that also asserts the path the console
 is published on. Both keep the lease (`stop: never`), take their prerequisites
-from one hydration workflow, and run the same deployment.
-
-- `profile: oce` (default reachability) and `profile: oce-tailscale`
-  (`network: tailscale`), each with an `oce-teardown` preset that runs
-  `scripts/dev-down` and, on the tailnet profile, resets Serve;
-- `hydrate: { actions: true }` with
-  `actions: { workflow: .github/workflows/crabbox-hydrate.yml, job: hydrate }`;
-- `command:` the CLI build and `scripts/dev-up`, and on the tailnet job the
-  same command behind `tailscale serve` and `OCC_DEVELOPMENT_BROWSER_ORIGIN`.
+from one hydration workflow, and run the same deployment through
+`scripts/dev-up`.
 
 Prerequisites come from a `workflow_dispatch`-only workflow that declares the
 inputs Crabbox inspects and writes the readiness marker Crabbox waits for, so
 OCE CI never runs it. Because the deployment is a Crabbox job, one command
 leases, hydrates, runs and stops, and `crabbox job run --dry-run <job>` prints
-that expansion without leasing. The file contents, the workflow steps, and the
+that expansion without leasing. The configuration, the workflow steps, and the
 ordered work are in the
 [implementation plan](../plans/0019-crabbox-oce-deployment.md).
 
@@ -122,12 +115,12 @@ the job's own step, after the deployment:
    terminates TLS with the tailnet certificate and forwards to the existing
    loopback console proxy;
 2. the job passes the machine's tailnet origin to `dev-up`;
-3. the `oce-tailscale` teardown preset resets Serve.
+3. the `oce-tailscale` teardown preset resets Tailscale Serve.
 
-`dev-up` gains one optional setting, `OCC_DEVELOPMENT_BROWSER_ORIGIN`, whose
-value is the tailnet origin with an explicit port,
-`https://<machine>.<tailnet>.ts.net:443`; the launcher refuses an origin without
-one. When it is set, the launcher:
+The launcher that `scripts/dev-up` invokes gains one optional setting,
+`OCC_DEVELOPMENT_BROWSER_ORIGIN`, whose value is the tailnet origin with an
+explicit port, `https://<machine>.<tailnet>.ts.net:443`; it refuses an origin
+without one. When it is set, the launcher:
 
 - uses that origin as `auth.baseUrl` in place of
   `https://console.<cluster>.oce.localhost:8443`;
@@ -196,10 +189,10 @@ flowchart TB
 
 ## Delivery and verification
 
-Delivery status: Planned. Delivery is one launcher setting, the repository's
-Crabbox configuration, and the current documentation those touch; the
-[implementation plan](../plans/0019-crabbox-oce-deployment.md) orders the work,
-names its files, and pairs each outcome below with its check.
+Delivery is one launcher setting, the repository's Crabbox configuration, and
+the current documentation those touch; the
+[implementation plan](../plans/0019-crabbox-oce-deployment.md) owns its status,
+orders the work, names its files, and pairs each outcome below with its check.
 
 Required outcomes and evidence: a second device opens
 `https://<machine>.<tailnet>.ts.net/console/` and signs in, while a device
@@ -207,13 +200,12 @@ outside the tailnet cannot reach it; the job refuses to run when Crabbox
 cannot reach the lease over the tailnet; the launcher's own API check
 (`OCC_URL=... OCC_SERVICE_KEY_FILE=... ./bin/occ installation get`, which
 `scripts/dev-up` prints when it finishes) answers on the lease; the
-`oce-tailscale` teardown preset removes the deployment and resets Serve.
+`oce-tailscale` teardown preset removes the deployment and resets Tailscale Serve.
 
 Not yet verified: none of this has run. Reading establishes the Crabbox
 configuration and the launcher's contracts, not that this stack comes up on a
-leased machine; the bare-VM run on a host with the profile's storage and free
-ports (about 20 GB, and 3000, 8443, 6443) is the first proof, and the tailnet
-must already serve HTTPS certificates for `tailscale serve --https=443`.
+leased machine; the plan's bare-VM run is the first proof, and the tailnet must
+already serve HTTPS certificates for `tailscale serve --https=443`.
 
 <a id="alternatives-and-open-decisions"></a>
 
