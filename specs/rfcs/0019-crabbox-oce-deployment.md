@@ -91,7 +91,9 @@ The job runs in three steps:
    provider and syncs the checkout.
 2. **Prerequisites, once per lease.** Crabbox Actions hydration runs
    `crabbox-hydrate.yml` on the machine. The workflow has only a
-   `workflow_dispatch` trigger, so OCE CI never runs it. It installs what
+   `workflow_dispatch` trigger, so OCE CI never runs it, and it declares the
+   `crabbox_id`, `crabbox_runner_label`, and `crabbox_keep_alive_minutes`
+   inputs that Crabbox requires of a workflow it inspects. It installs what
    OCE's scripts expect but do not install themselves:
    - Docker, through `apt-get install docker.io`, with the lease user added
      to `docker`;
@@ -152,7 +154,7 @@ does not change.
 | Deploy  | `crabbox job run oce-deploy`, or `crabbox job run oce-deploy-tailscale`                                     |
 | Console | Open `https://<machine>.<tailnet>.ts.net/console/` on any tailnet device                                    |
 | Tunnel  | Without Tailscale: `crabbox tunnel --id <lease> --local-port 8443 8443`, then open the printed URL          |
-| Sign in | `crabbox connect <lease>`, then read the printed password file                                              |
+| Sign in | `crabbox connect <lease>`, then read the administrator password file printed by the launcher                |
 | CLI     | `crabbox run --id <lease> --no-sync -- ./bin/occ namespace list`                                            |
 | Remove  | `crabbox run --id <lease> --no-sync --profile <profile> --preset oce-teardown`, then `crabbox stop <lease>` |
 
