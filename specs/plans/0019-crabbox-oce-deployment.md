@@ -17,10 +17,12 @@ oce-deploy` from an OCE checkout; the job deploys OCE on that host, and a second
 device on the tailnet opens the console. The job is unattended and re-runnable,
 and the run carries its own evidence.
 
-The deployment stays `scripts/dev-up`, and the only OCE change is one optional
-launcher setting. [RFC-0019](../rfcs/0019-crabbox-oce-deployment.md) owns the
-requirement, the access contract, and the non-goals; this plan adds only what
-executing them needs.
+The deployment stays `scripts/dev-up` — the profile
+[Local Setup](https://docs-enterprise.openclaw.org/guides/quickstart/)
+([source](../../docs/guides/quickstart.md)) documents — and the only OCE change
+is one optional launcher setting. [RFC-0019](../rfcs/0019-crabbox-oce-deployment.md)
+owns the requirement, the access contract, and the non-goals; this plan adds
+only what executing them needs.
 
 ## Contract and source touchpoints
 
@@ -125,15 +127,15 @@ executing them needs.
 
 ## Verification
 
-| Required outcome                                                                                                                            | Real check and prerequisites                                                                                                                                                                       | Result or remaining proof |
-| ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| The deploy job completes the profile on a fresh Linux lease                                                                                 | `crabbox job run oce-deploy` on a bare VM with the profile's storage and free ports (about 20 GB, 3000/8443/6443)                                                                                  | Not run                   |
-| A second tailnet device opens the console and signs in                                                                                      | `crabbox job run oce-deploy-tailscale`, then `https://<machine>.<tailnet>.ts.net/console/` from another device; the tailnet needs HTTPS certificates for `serve --https=443`                       | Not run                   |
-| A device outside the tailnet cannot reach the console                                                                                       | The same run, then a device without tailnet access                                                                                                                                                 | Not run                   |
-| The job refuses a machine Crabbox cannot reach over the tailnet                                                                             | `network: tailscale` with an unreachable lease                                                                                                                                                     | Not run                   |
-| The launcher's own API check answers on the lease                                                                                           | `OCC_URL=… OCC_SERVICE_KEY_FILE=… ./bin/occ installation get`, the command `scripts/dev-up` prints                                                                                                 | Not run                   |
-| Teardown removes the deployment and resets Serve                                                                                            | The profile's `oce-teardown` preset, then `crabbox stop`                                                                                                                                           | Not run                   |
-| The setting changes `auth.baseUrl`, the Console origin, the redirect host and the printed URL, and leaves the launcher unchanged when unset | Extend the occdev launcher tests (`internal/occdev/keycloak_k3d_test.go` asserts the installation values today) and the real-cluster lane (`tests/integration/dev-up-openshell-k3d-real.test.mjs`) | Not run                   |
+| Required outcome                                                                                                                            | Real check and prerequisites                                                                                                                                                                                       | Result or remaining proof |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| The deploy job completes the profile on a fresh Linux lease                                                                                 | `crabbox job run oce-deploy` on a bare VM with the prerequisites [Local Setup](https://docs-enterprise.openclaw.org/guides/quickstart/) lists (about 20 GB of engine storage; free 3000, 8443, 6443)               | Not run                   |
+| A second tailnet device opens the console and signs in                                                                                      | `crabbox job run oce-deploy-tailscale`, then `https://<machine>.<tailnet>.ts.net/console/` from another device; the tailnet needs HTTPS certificates for `serve --https=443`                                       | Not run                   |
+| A device outside the tailnet cannot reach the console                                                                                       | The same run, then a device without tailnet access                                                                                                                                                                 | Not run                   |
+| The job refuses a machine Crabbox cannot reach over the tailnet                                                                             | `network: tailscale` with an unreachable lease                                                                                                                                                                     | Not run                   |
+| The launcher's own API check answers on the lease                                                                                           | `OCC_URL=… OCC_SERVICE_KEY_FILE=… ./bin/occ installation get`, the check [Local Setup](../../docs/guides/quickstart.md#read-the-installation-with-the-bootstrap-service-key) documents and `scripts/dev-up` prints | Not run                   |
+| Teardown removes the deployment and resets Serve                                                                                            | The profile's `oce-teardown` preset, then `crabbox stop`                                                                                                                                                           | Not run                   |
+| The setting changes `auth.baseUrl`, the Console origin, the redirect host and the printed URL, and leaves the launcher unchanged when unset | Extend the occdev launcher tests (`internal/occdev/keycloak_k3d_test.go` asserts the installation values today) and the real-cluster lane (`tests/integration/dev-up-openshell-k3d-real.test.mjs`)                 | Not run                   |
 
 ## Open decisions
 

@@ -30,10 +30,14 @@ OCE console.
 ## Motivation
 
 OpenClaw gateways commonly run on a rented host, and OpenClaw documents
-deployment onto VPS hosts. OCE cannot reach those hosts today: its deployment
-scripts expect a prepared workstation and serve the console only on that
-workstation's loopback, so an operator has to prepare the machine by hand and
-can open the console only from the machine itself.
+deployment onto VPS hosts. OCE cannot reach those hosts today. Its deployment is
+the local profile in the [Local Setup](../../docs/guides/quickstart.md) guide:
+an operator prepares a workstation, runs `./bin/occ dev up` there, and
+Kubernetes-only mode publishes the console on that machine's loopback, so
+another computer resolves its `.localhost` hostname to itself. The documented
+answer is a troubleshooting procedure,
+[Open the console from another machine](../../docs/guides/operate/troubleshooting.md#open-the-console-from-another-machine),
+not a deployment other devices can use.
 
 The deployment is manual in the other sense too: nothing re-runs it, and
 nothing records what it produced. Crabbox closes both gaps with machinery it
@@ -112,29 +116,28 @@ puts the machine on the tailnet; this RFC adds no join logic of its own:
 the tailnet, so the job only runs where the tailnet is already the path. The
 console itself is published only on the node `tailscale serve` runs on.
 
-Crabbox does not use Tailscale Serve for its managed leases, so that step is
-the job's own. The job
-publishes the loopback console proxy with
-`tailscale serve --bg --https=443 https+insecure://127.0.0.1:8443` and passes
-the machine's tailnet origin, `https://<machine>.<tailnet>.ts.net`, to
-`dev-up`. The `oce-tailscale` teardown preset resets Serve.
+Crabbox does not use Tailscale Serve for its managed leases, so publishing is
+the job's own step, after the deployment:
 
-`dev-up` gains one optional setting, `OCC_DEVELOPMENT_BROWSER_ORIGIN`. When it
-is set, the launcher:
+1. `tailscale serve --bg --https=443 https+insecure://127.0.0.1:8443`
+   terminates TLS with the tailnet certificate and forwards to the existing
+   loopback console proxy;
+2. the job passes the machine's tailnet origin to `dev-up`;
+3. the `oce-tailscale` teardown preset resets Serve.
+
+`dev-up` gains one optional setting, `OCC_DEVELOPMENT_BROWSER_ORIGIN`, whose
+value is the tailnet origin with an explicit port,
+`https://<machine>.<tailnet>.ts.net:443`; the launcher refuses an origin without
+one. When it is set, the launcher:
 
 - uses that origin as `auth.baseUrl` in place of
-  `https://console.<cluster>.oce.localhost:8443`, and as the Console origin
-  the launcher checks and the sign-in redirect host it derives today from
-  `console.<cluster>.oce.localhost`;
+  `https://console.<cluster>.oce.localhost:8443`;
+- uses it as the Console origin it checks, and as the sign-in redirect host it
+  derives today from `console.<cluster>.oce.localhost`;
 - disables `agentNativeAdmin`;
 - prints `<origin>/console/` as the console URL.
 
-The launcher accepts an `https` origin only when it names a port, so the job
-passes `https://<machine>.<tailnet>.ts.net:443`.
-
-Tailscale Serve terminates TLS with the tailnet certificate and forwards to
-the existing loopback console proxy. When the setting is unset, the launcher
-does not change.
+When the setting is unset, the launcher does not change.
 
 ### Access
 
@@ -244,6 +247,9 @@ must already serve HTTPS certificates for `tailscale serve --https=443`.
 
 ## References
 
+- [Local Setup](https://docs-enterprise.openclaw.org/guides/quickstart/)
+  ([source](../../docs/guides/quickstart.md)) and
+  [Open the console from another machine](../../docs/guides/operate/troubleshooting.md#open-the-console-from-another-machine)
 - [`scripts/dev-up`](../../scripts/dev-up) and
   [`scripts/ci/setup-tools.sh`](../../scripts/ci/setup-tools.sh)
 - Crabbox [jobs](https://github.com/openclaw/crabbox/blob/main/docs/features/jobs.md),
