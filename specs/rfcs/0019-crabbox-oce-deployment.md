@@ -9,231 +9,192 @@ author: aitrawog
 - **ID:** RFC-0019
 - **Created:** 2026-10-12
 - **Last updated:** 2026-10-13
-- **RFC PR:** [#2](https://github.com/opencharly/openclaw-enterprise/pull/2)
-- **Implementation plan:** [RFC-0019 delivery plan](../plans/0019-crabbox-oce-deployment.md)
-- **Source baseline:** Enterprise `3d180654c`; Crabbox `66b66f8`
+- **RFC PR:** [opencharly/openclaw-enterprise#2](https://github.com/opencharly/openclaw-enterprise/pull/2)
+- **Implementation plan:** [RFC-0019 implementation plan](../plans/0019-crabbox-oce-deployment.md)
+- **Related:** verified against Enterprise `3d180654c` and [Crabbox](https://github.com/openclaw/crabbox) `3d9260e7`
 
 <a id="problem-and-decision"></a>
 
 ## Summary
 
-Add repository-defined Crabbox jobs that deploy OpenClaw Enterprise (OCE)'s
-existing Kubernetes development profile on a remote Linux host. Crabbox manages
-the host, checkout synchronization, and prerequisite setup; `scripts/dev-up`
-continues to own platform startup. An optional Tailscale job publishes the console
-at the host's private tailnet HTTPS origin.
+Add three [Crabbox jobs](https://github.com/openclaw/crabbox/blob/3d9260e7a37e025ed36b3c38fbcf1ae50e4a3520/docs/features/jobs.md)
+that run OpenClaw Enterprise (OCE)'s existing Kubernetes-only development profile
+on a remote Linux host:
 
-This RFC proposes the integration. The jobs and browser-origin setting do not
-exist yet. It does not establish a production deployment option or change the
-RFC's decision status to Accepted.
+- `oce-deploy` prepares the host and starts the profile.
+- `oce-deploy-tailscale` also serves the console on the host's tailnet HTTPS name.
+- `oce-teardown` removes everything the other two jobs created.
+
+The only product change is an optional launcher setting,
+`OCC_DEVELOPMENT_BROWSER_ORIGIN`, which tells the installation which browser
+origin to accept.
 
 ## Motivation
 
-A developer or operator needs a remote development installation that can stay
-available between sessions and be recreated from a checkout. Today,
-[Local Setup](../../docs/guides/quickstart.md) requires a prepared machine and
-publishes the console on its loopback interface. Remote browser access already
-works through the documented [SSH tunnel and development CA](../../docs/guides/operate/troubleshooting.md#open-the-console-from-another-machine).
-[Production Kubernetes installation](../../docs/guides/kubernetes-setup.md) is a
-separate supported procedure.
-
-The missing convenience is a repository-defined command that prepares a remote
-host, starts the development profile, retains it for inspection, and optionally
-provides private browser access without configuring a tunnel and CA on each
-client. Crabbox supplies the existing host-management mechanism.
+Contributors want a development installation on a cloud lease or on a server
+they own, and they want to open its console from their own devices.
+[Local Setup](../../docs/guides/quickstart.md) assumes a machine that is already
+prepared, and it serves the console only on that machine's loopback. Every other
+client needs an [SSH forward and a copy of the development CA](../../docs/guides/operate/troubleshooting.md#open-the-console-from-another-machine).
+Nothing in the repository prepares a host or repeats a deployment.
 
 <a id="scope"></a>
 
-## Goals and non-goals
+## Goals
 
-The proposed caller runs `crabbox job run oce-deploy` from the OCE checkout.
-`oce-deploy-tailscale` adds private HTTPS console access. Both jobs must support a
-fresh lease and explicit reuse with `--id <lease>`.
+- One command deploys the caller's checkout onto a fresh or reused host.
+- Tailnet devices that the tailnet policy permits open the console over HTTPS
+  without installing a CA.
+- One command removes the deployment.
+- When `OCC_DEVELOPMENT_BROWSER_ORIGIN` is unset, local behavior does not change.
 
-Scope includes prerequisite hydration, a browser-origin setting in the launcher,
-retained leases, explicit teardown, and the documentation needed to use them.
-The host must meet the development profile's storage, container-engine, kernel,
-and networking requirements; a Crabbox lease alone does not establish suitability.
+[AGENTS.md](../../AGENTS.md#active-workspace-boundary) reserves deployment
+behavior for approved milestones. This proposal adds development tooling, not a
+platform resource or production path. Accepting the RFC admits it to scope.
 
-Production packaging, public internet exposure, Tailscale join logic, model-backed
-Agent qualification, and Agent native admin UIs over the tailnet are outside this
-proposal. Native admin access needs per-Agent hostnames; a single tailnet machine
-name does not provide them.
+## Non-goals
+
+- Production installation or public exposure through Tailscale Funnel.
+- Keycloak sign-in, the OpenShell profile, or native Agent admin over the
+  tailnet. Each depends on host names that only the host itself can resolve.
+- Joining a host to a tailnet, more than one installation per host, or hosts
+  other than Ubuntu on amd64.
 
 <a id="design"></a>
 
-## Proposed design
+## Proposal
 
-### Deployment ownership and lifecycle
+| Owner                                         | Responsibility                                                          |
+| --------------------------------------------- | ----------------------------------------------------------------------- |
+| Caller                                        | Crabbox provider, lease, tailnet join, and teardown                     |
+| Crabbox                                       | Lease, checkout sync, local Actions hydration, SSH, and release         |
+| `.github/workflows/crabbox-hydrate.yml` (new) | Host checks, Docker, and toolchain                                      |
+| `scripts/crabbox/oce-dev` (new)               | Profile environment, launcher calls, and its own Serve handler          |
+| Launcher (`occ dev up/down`)                  | Cluster, credentials, startup checks, and rollback; otherwise unchanged |
+| Tailnet operator                              | HTTPS certificates and the access policy                                |
 
-A root `.crabbox.yaml` defines two jobs and their teardown profiles. Both hydrate
-prerequisites from `.github/workflows/crabbox-hydrate.yml`, install the locked
-repository dependencies, build the CLI, and invoke `scripts/dev-up` with the
-Kubernetes-only profile. The workflow has a `workflow_dispatch` trigger and is not
-added to ordinary CI triggers. Crabbox's default hydration path executes its
-supported workflow steps over SSH.
+### Hosts and lifetime
 
-Crabbox owns allocation, sync, hydration, and remote execution. The existing
-launcher owns the cluster, database, bootstrap credentials, and startup checks.
-The OCE deployment contributors own the job and workflow; the launcher
-contributors own origin validation and console behavior. The caller selects an
-eligible provider or existing SSH host and owns inspection and cleanup.
+Supported hosts run Ubuntu 24.04 or 26.04 on amd64 and are dedicated to one
+installation. Crabbox-managed Linux leases qualify, and so does a static SSH
+host. Hydration refuses any other host before changing it. On a supported host
+it makes two host-wide changes that OCE's guides already document: it installs
+Docker, and it applies the
+[Codex sandbox sysctl](../../docs/guides/operate/troubleshooting.md#local-codex-sandbox-check-fails).
 
-Use `stop: never` to retain the lease after success or failure. Provider TTL and
-idle limits still apply. This retention policy does not promise indefinite
-availability or make startup on an existing lease idempotent. The plan must verify
-reuse and document when teardown is required before another start.
+Crabbox's default lease policy expires a managed lease after at most four hours.
+A long-lived environment needs a static host.
 
-### Private console access
+### Console origin
 
-The Tailscale job requires `network: tailscale`, which makes Crabbox refuse remote
-execution when the caller cannot reach the host over tailnet SSH. For managed
-Linux leases, the caller enables Crabbox's Tailscale integration on a provider
-that supports it. For the static `ssh` provider, the operator joins the host in
-advance and sets `static.host` to its tailnet name. Other providers require their
-own verified host preparation; this RFC does not promise universal compatibility.
+`OCC_DEVELOPMENT_BROWSER_ORIGIN` takes a bare `https` origin. It is valid only
+with the Kubernetes-only profile, the `none` sandbox driver, and password
+sign-in; the launcher rejects anything else before it creates resources. When
+the setting is present, the launcher:
 
-The job configures Tailscale Serve on port 443 to proxy the loopback HTTPS console
-on port 8443. The proposed target is `https+insecure://127.0.0.1:8443`: Serve
-validates the client-facing connection with a tailnet certificate but skips the
-development certificate check on that loopback hop. This exception must remain
-confined to that hop. The API and development console listeners remain on
-loopback; Funnel is not used.
+- sets `auth.baseUrl` to the origin;
+- omits `agentNativeAdmin`; and
+- prints `<origin>/console/` as the console URL.
 
-The tailnet operator must enable HTTPS certificates and permit the intended
-clients. OCE still requires sign-in and exact-resource authorization; tailnet
-membership and Serve identity headers do not provision an OCE identity or grant
-permissions. Administrator passwords, service keys, and CA private keys remain
-in the launcher's protected state directory and must not become job artifacts.
+The installation then accepts only that origin.
 
-### Launcher contract
+The launcher needs no TLS or ingress change, for three reasons:
 
-Add optional `OCC_DEVELOPMENT_BROWSER_ORIGIN`, initially documented as
-`https://<machine>.<tailnet>.ts.net:443`. The explicit port matches the current
-console client's origin parser; validation must reject malformed origins before
-creating deployment resources.
+- With password sign-in, the launcher never calls the console over HTTPS. Only
+  the Keycloak path does, through [`newDevelopmentConsole`](../../internal/occdev/keycloak_k3d.go).
+- The console port is a plain TLS passthrough to the API
+  ([`openshell_k3d.go`](../../internal/occdev/openshell_k3d.go)).
+- The API compares `Origin` with `new URL(auth.baseUrl).origin`
+  ([`auth/index.ts`](../../apps/controller/src/auth/index.ts)). That value
+  drops the default port, so the origin needs no `:443`.
 
-When set, the launcher must use one consistent external origin for `auth.baseUrl`,
-browser-origin checks, relevant sign-in redirects, and the printed console URL.
-It must disable `agentNativeAdmin`. When unset, existing launcher behavior remains.
+For the Tailscale job, `oce-dev` derives the origin from the host's MagicDNS
+name and requires an HTTPS certificate domain for that name. It then adds this
+[Serve](https://tailscale.com/docs/features/tailscale-serve) handler before
+startup:
 
-The implementation must also reconcile that external name with ingress host
-matching, TLS server names, and the launcher's own HTTPS checks. The current
-[`newDevelopmentConsole`](../../internal/occdev/keycloak_k3d.go) trusts only the
-development CA and dials loopback; substituting a tailnet origin alone cannot
-establish a valid TLS path. The plan tracks this integration decision explicitly.
-
-### Architecture
-
-Dashed arrows show the proposed integration. Existing components do not establish
-that the combined deployment or browser path works.
-
-```mermaid
----
-config:
-  theme: base
-  htmlLabels: true
-  themeVariables:
-    fontSize: 14px
-    lineColor: "#8B949E"
-    edgeLabelBackground: "#FFFFFF"
-  flowchart:
-    curve: linear
-    nodeSpacing: 28
-    rankSpacing: 32
-    padding: 14
-    subGraphTitleMargin:
-      top: 10
-      bottom: 14
----
-flowchart TB
-  Caller["<b>Operator</b><br/>Checkout and Crabbox"]
-  Device["<b>Allowed tailnet client</b><br/>Browser and OCE identity"]
-  subgraph Host["Remote Linux development host"]
-    Setup["<b>Hydration and launcher</b><br/>Prepare and deploy"]
-    Serve["<b>Tailscale Serve</b><br/>Private HTTPS on 443"]
-    Console["<b>OCE console</b><br/>Loopback HTTPS on 8443"]
-  end
-  Caller -.->|tailnet or provider SSH| Setup
-  Setup -.->|starts existing profile| Console
-  Device -.->|tailnet policy and HTTPS| Serve
-  Serve -.->|loopback proxy| Console
-  classDef actor fill:#F1EEF5,stroke:#A091AD,color:#3A3243,stroke-width:1px
-  classDef pending fill:#F3F4F6,stroke:#98A2AE,color:#44505F,stroke-width:1px,stroke-dasharray:4 4
-  class Caller,Device actor
-  class Setup,Serve,Console pending
-  style Host fill:#FAFBFC,stroke:#D8DEE6,stroke-width:1px
-  linkStyle default stroke:#8B949E,stroke-width:1px
+```sh
+sudo tailscale serve --bg --https=443 https+insecure://127.0.0.1:8443
 ```
 
-### Failure and cleanup
+Serve presents the tailnet certificate. It skips verification only on the
+loopback hop to the development certificate. Listeners stay on loopback. The
+tailnet policy decides which devices connect. OCE still requires sign-in and
+authorizes every request. Credentials stay in the private state directory, and
+no job collects artifacts.
 
-A job failure must report the failed stage and retained lease ID without exposing
-credentials. Retention permits inspection but does not override the launcher's
-existing rollback. An unreachable lease cannot be inspected until access returns.
-If Serve was configured before startup failed, it may still be configured; the
-operator must be able to remove it separately from platform teardown.
+### Lifecycle
 
-The teardown profile uses the same deployment settings and state directory as
-startup. `scripts/dev-down` removes the development installation, including its
-data and credentials; the Tailscale profile also removes its Serve configuration.
-Only then does the caller release the lease with `crabbox stop <lease>`. Resetting
-Serve on an existing host can affect other services, so the plan must define an
-exclusive-host prerequisite or cleanup limited to the job's configuration.
+Proposed flow; `oce-deploy` omits the Serve steps.
+
+```mermaid
+sequenceDiagram
+  participant Caller
+  participant Crabbox
+  participant Script as Hydration and oce-dev
+  participant Launcher as occ dev up
+  Caller->>Crabbox: job run oce-deploy-tailscale
+  Crabbox->>Script: Lease, tailnet SSH, sync, hydrate
+  alt Host unsupported
+    Script-->>Caller: Refused before any host change
+  else Host prepared
+    Script->>Script: Check certificate domain, add Serve handler
+    Script->>Launcher: Start with browser origin
+    alt Startup succeeds
+      Launcher-->>Script: Ready
+      Script-->>Caller: API and HTTPS checks pass, console URL
+    else Startup fails
+      Launcher-->>Script: Failure after rollback
+      Script-->>Caller: Serve handler removed, failed stage
+    end
+  end
+```
+
+Deploy jobs keep the lease after both success and failure (`stop: never`) so the
+caller can inspect it. A failed startup leaves nothing behind: the launcher
+rolls back its state, and `oce-dev` removes its Serve handler. The launcher
+refuses to start over an existing installation, so redeploying a used lease
+requires teardown first.
+
+`oce-dev down` removes the recorded Serve handler with `tailscale serve … off`
+and runs `occ dev down`. It attempts both steps, reports both, and never resets
+other Serve configuration. `oce-teardown` releases the lease only after a
+successful teardown (`stop: success`).
 
 ## Delivery and verification
 
-The [implementation plan](../plans/0019-crabbox-oce-deployment.md) owns ordered
-changes, prerequisites, delivery status, and results. Required outcomes are:
+The [implementation plan](../plans/0019-crabbox-oce-deployment.md) owns the work
+and results. Delivery requires the following evidence:
 
-- A fresh eligible Linux host reaches the launcher's ready state; authenticated
-  `occ installation get` succeeds and the initial Namespace becomes ready.
-- Explicit lease reuse has a verified procedure, including recovery after failure.
-- An allowed second tailnet device opens the console and signs in; a denied
-  tailnet device and a device outside the tailnet cannot use that publication.
-- Missing tailnet SSH access prevents the Tailscale job from running remotely.
-- Origin validation, redirects, TLS checks, and disabled native admin access agree;
-  the unset setting preserves the current local profile.
-- Teardown removes the owned deployment and Serve publication, reports failures,
-  and permits explicit lease release without collecting credentials as artifacts.
+1. A fresh managed lease and a static host both reach ready and pass
+   `occ installation get`. An unsupported host is refused unchanged.
+2. A permitted tailnet device signs in. A denied device, an off-tailnet device,
+   and an unauthenticated request all fail.
+3. The Tailscale job refuses to run without tailnet SSH and fails before startup
+   without HTTPS certificates.
+4. An invalid origin fails before any effect. Existing launcher tests pass with
+   the setting unset.
+5. Teardown removes only what the jobs created, reports partial failure, and
+   keeps the lease when teardown fails.
+6. No log contains a credential.
 
-No deployment or tailnet checks have run. Source and documentation review support
-this proposal's starting assumptions, not runtime availability or production readiness.
+None of these checks has run.
 
 <a id="alternatives-and-open-decisions"></a>
 
 ## Rationale and alternatives
 
-- **Retain manual setup and SSH tunneling.** This already supports remote console
-  access and avoids a launcher change, but leaves host preparation and each
-  browser's tunnel and CA setup to the operator.
-- **Expose the development console directly on the tailnet.** This still requires
-  client CA setup and changes the listener boundary. Serve keeps that listener on
-  loopback and supplies the external certificate.
-- **Install the production Helm deployment.** This remains the appropriate route
-  for production; it does not provide the requested disposable development flow.
-- **Add a separate Tailscale join script.** Reusing Crabbox avoids another owner
-  for lease enrollment, auth keys, and release behavior.
-
-## Unresolved questions
-
-- **Deployment scope:** responsible maintainers must determine whether the proposed
-  remote development behavior enters the approved milestones in
-  [AGENTS.md](../../AGENTS.md#active-workspace-boundary). This PR only authors the proposal.
-- **Origin integration:** launcher contributors must select and verify the TLS,
-  ingress, and sign-in path described above before delivering the Tailscale job.
-- **Host and Serve ownership:** deployment contributors and the tailnet operator
-  must select the initial supported Linux image and safe Serve cleanup contract.
+- **Keep manual setup and SSH forwarding.** No code is needed, but every caller
+  repeats host preparation and CA trust.
+- **Use Serve without the launcher setting.** Sign-in fails because the browser's
+  `*.ts.net` origin does not match the installation's `.localhost` origin.
+- **Bind the console to the tailnet.** This breaks the loopback-only rule for
+  development listeners, and clients would still need the development CA.
+- **Write a separate provisioning script.** Crabbox already owns leases,
+  hydration, tailnet enrollment, and release.
 
 ## References
 
-- [Specification process](../../docs/contributing/specifications.md) and
-  [platform design](../../docs/design.md)
-- Published [Local Setup](https://docs-enterprise.openclaw.org/guides/quickstart/)
-  and [remote console access](https://docs-enterprise.openclaw.org/guides/operate/troubleshooting/#open-the-console-from-another-machine)
-- [`scripts/dev-up`](../../scripts/dev-up), [`scripts/dev-down`](../../scripts/dev-down),
-  and [`scripts/ci/setup-tools.sh`](../../scripts/ci/setup-tools.sh)
-- Crabbox at `66b66f8`: [jobs](https://github.com/openclaw/crabbox/blob/66b66f8/docs/features/jobs.md),
-  [hydration](https://github.com/openclaw/crabbox/blob/66b66f8/docs/features/actions-hydration.md),
-  and [Tailscale integration](https://github.com/openclaw/crabbox/blob/66b66f8/docs/features/tailscale.md)
-- [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve)
+- [Specification process](../../docs/contributing/specifications.md) and [development settings](../../docs/reference/settings/development.md)
+- Crabbox [hydration](https://github.com/openclaw/crabbox/blob/3d9260e7a37e025ed36b3c38fbcf1ae50e4a3520/docs/features/actions-hydration.md), [Tailscale](https://github.com/openclaw/crabbox/blob/3d9260e7a37e025ed36b3c38fbcf1ae50e4a3520/docs/features/tailscale.md), and [lease lifetime](https://github.com/openclaw/crabbox/blob/3d9260e7a37e025ed36b3c38fbcf1ae50e4a3520/docs/features/lifecycle-cleanup.md)
+- Tailscale [Serve CLI](https://tailscale.com/docs/reference/tailscale-cli/serve)
