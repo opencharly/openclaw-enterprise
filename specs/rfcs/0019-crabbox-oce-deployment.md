@@ -35,9 +35,10 @@ can currently reach that console, and there is no automatic way to run a
 long-running test deployment.
 
 Those users and developers need the same functionality on a remote host: one
-command that deploys OCE onto a machine they already lease or own, a console every
-device on the tailnet can open, and a long-running test deployment that runs
-unattended, repeats on demand, and doubles as its own check.
+command that deploys OCE onto a machine they already lease or own, a console that
+every device on a secure network such as a tailnet can open, and a long-running
+test deployment that runs unattended, repeats on demand, and doubles as its own
+check.
 
 <a id="scope"></a>
 
