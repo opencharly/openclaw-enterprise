@@ -27,23 +27,13 @@ on a fresh lease and attach its artifacts and test summary.
 
 ## Motivation
 
-OpenClaw gateways commonly run on rented hosts, and OpenClaw documents deployment
-onto VPS hosts. OCE offers no way to deploy to one. Its development deployment is
-the local Kubernetes profile in [Local Setup](../../docs/guides/quickstart.md):
-an operator prepares a workstation, runs `./bin/occ dev up`, and the console is
-published on that machine's loopback, so only that machine can reach it. Anyone
-else gets a troubleshooting procedure,
-[Open the console from another machine](../../docs/guides/operate/troubleshooting.md#open-the-console-from-another-machine):
-an SSH forward from a second computer, not a deployment a team can share. Nothing
-re-runs the deployment either, and nothing records what it produced.
-
-An operator with a machine to hand, rented or owned, needs one command that
-deploys OCE onto it and, on a tailnet, publishes the console to every device
-there. Crabbox already supplies that machine: it leases a managed host or takes an
-existing one over `ssh`, syncs a checkout, hydrates prerequisites once per lease,
-runs commands and forwards ports, and its jobs are named, repo-local flows that
-lease, hydrate, run and stop unattended. The same command therefore re-runs a
-deployment, and Crabbox can attach the run's artifacts and a test summary to it.
+Teams run OpenClaw gateways on rented hosts and want OCE there too, but OCE's
+development deployment is local: the
+[Local Setup](../../docs/guides/quickstart.md) guide runs it on a prepared
+workstation and publishes the console on that machine's loopback, so no other
+device can reach it. Nothing re-runs the deployment either. One command that
+deploys OCE onto a machine a team already leases or owns, and publishes the
+console to every device on the tailnet, makes that a routine, repeatable step.
 
 <a id="scope"></a>
 
