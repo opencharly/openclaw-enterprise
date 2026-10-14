@@ -106,8 +106,11 @@ export OCC_DEVELOPMENT_SANDBOX_DRIVER=none
 unset OCC_DEVELOPMENT_SIGN_IN
 ```
 
-Both Compute and control-plane selectors are required. The launcher creates its
-own k3d cluster, PostgreSQL, routing controllers, and Helm-installed OCC; it also
+The first three lines are Local Setup's exact profile. The job pins the container
+engine to Docker, which `auto` selects on the hydrated host anyway, and unsets
+`OCC_DEVELOPMENT_SIGN_IN` so an inherited value cannot replace the default
+password sign-in. Both Compute and control-plane selectors are required. The
+launcher creates its own k3d cluster, PostgreSQL, routing controllers, and Helm-installed OCC; it also
 owns bootstrap and cleanup. This is local development on the leased host, not
 [production installation](../../docs/guides/deploy/production-installation.md)
 into an existing cluster. Compose control-plane profiles are outside this proposal.
