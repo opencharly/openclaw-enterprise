@@ -119,7 +119,7 @@ import {
   normalizePluginDesiredState,
   normalizePluginApprovers,
   normalizePresetTemplate,
-  presetTemplateDefaults,
+  presetTemplateDefaultsWithPlaceholders,
   PresetValidationError,
   normalizeSecretBindings,
   normalizeHarnessAuthBinding,
@@ -290,6 +290,7 @@ export {
   ConfigurationHarnessError,
   configurationSettingMessage,
   CredentialGatewayNotConfiguredError,
+  CredentialSourceConfigError,
   CredentialSourceDriverError,
   CredentialSourceRevisionError,
   CredentialSourceTypeNotOfferedError,
@@ -357,6 +358,7 @@ export {
 } from "./native-worker-support.ts";
 export {
   backendDefinitionMap,
+  gatewayEndpointRewritesIpv4,
   validateBackendDefinitions,
   validateSelectedBackendDrivers,
   validateServiceAccountBackendBinding,
@@ -393,12 +395,16 @@ export {
   type TransactionalAuditWriter,
 } from "./state/platform-state.ts";
 export { resolveConfiguredHarnessId } from "./configured-harness.ts";
+export { imageReferenceProblem } from "./image-reference.ts";
+export type { ImageReferenceProblem } from "./image-reference.ts";
 export {
-  INVALID_HEADER_NAME,
+  environmentReference,
+  invalidHeaderNameRequirement,
   isAdmittedHeaderName,
   isCredentialHeaderName,
   isHttpFieldName,
   PROVIDER_MODELS_LIST,
+  urlHoldsUserinfo,
 } from "./model-provider-settings.ts";
 export { requireOpenClawRoster } from "./openclaw-roster.ts";
 export { CODEX_APPROVAL_POLICY_SETTING, codexApprovalPolicy } from "./configuration-settings.ts";
@@ -863,15 +869,6 @@ const CREDENTIAL_REGISTRATION_FENCE_MS = 2 * CREDENTIAL_GATEWAY_TIMEOUT_MS + 10_
  * sent again. A late original then meets an existing ConfigMap and fails AlreadyExists.
  */
 const PROVISIONING_CONFIGURATION_SETTLE_MS = 90_000;
-
-// What a Preset variable without a default renders to in a template's default values.
-const PRESET_VARIABLE_PLACEHOLDER = /\{\{ vars\.[A-Za-z_][A-Za-z0-9_]* \}\}/;
-
-// Preset saves pass these to every Configuration rule they run (the shared model provider rules
-// and Compute's), so a value that waits on an unfilled variable is checked once filled.
-const PRESET_DEFAULTS_VALIDATION: ConfigurationValidationOptions = {
-  unresolved: (text) => PRESET_VARIABLE_PLACEHOLDER.test(text),
-};
 
 /**
  * The most references a Secret read or delete examines. Each one costs authorization work,
@@ -4262,7 +4259,9 @@ export class OpenClawController {
     namespaceId: string,
   ): Promise<PresetTemplate> {
     const template = normalizePresetTemplate(input, namespaceId);
-    const values = presetTemplateDefaults(template).configuration?.values;
+    const { settings, unresolved, unresolvedType } =
+      presetTemplateDefaultsWithPlaceholders(template);
+    const values = settings.configuration?.values;
     if (values !== undefined) {
       const driver = this.configurationDriver();
       if (!driver.validateValues) {
@@ -4273,10 +4272,14 @@ export class OpenClawController {
       // The model provider and Compute rules first, as on Configuration create and update, so
       // a value they refuse gets the same message wherever it is written. A variable without a
       // default is still a placeholder here; the Configuration it fills is checked on create.
-      validateModelProviderSettings(values, PRESET_DEFAULTS_VALIDATION);
-      this.validateComputeConfiguration(values, PRESET_DEFAULTS_VALIDATION);
+      // Only text the render put a placeholder into waits on a variable, located by its path: an
+      // escaped token is literal text that stays in the launch render, so it is checked as
+      // written (finding 1214), even where it reads like a placeholder elsewhere (finding 1220).
+      const options: ConfigurationValidationOptions = { unresolved, unresolvedType };
+      validateModelProviderSettings(values, options);
+      this.validateComputeConfiguration(values, options);
       // Validation owns native credential rules; Preset CRUD never creates runtime resources.
-      await driver.validateValues(values);
+      await driver.validateValues(values, options);
     }
     return template;
   }
@@ -4454,7 +4457,7 @@ export class OpenClawController {
     if (!isName(input.name)) {
       throw new ScopeViolationError("The credential source name is invalid.");
     }
-    const config = Object.freeze({ ...(input.config ?? {}) });
+    const written = Object.freeze({ ...(input.config ?? {}) });
     const secretRefs = Object.freeze({ ...(input.secrets ?? {}) });
     this.namespaceIdentity(input.namespaceId);
     const { namespace, gateway, refresh, source, values } = await this.mutate(async (state) => {
@@ -4471,8 +4474,14 @@ export class OpenClawController {
       }
       const selected = this.credentialGatewayDriver();
       const type = await this.credentialSourceType(selected, input.type);
-      credentialSourceFieldsMatch("config", type.config, config);
+      credentialSourceFieldsMatch("config", type.config, written);
       credentialSourceFieldsMatch("secrets", type.secrets, secretRefs);
+      // The Driver may return the configuration in the form it uses, such as a normalized URL:
+      // the stored record, the response and the gateway then agree (finding 1292).
+      const config = Object.freeze({
+        ...(selected.validateSourceConfig({ type: type.type, config: written }) ?? written),
+      });
+      credentialSourceFieldsMatch("config", type.config, config);
       const refreshDriver =
         type.rotation === "refresh" ? this.credentialRefreshDriver() : undefined;
       const read = await this.readCredentialSourceSecrets(state, principalId, locked, secretRefs);
@@ -4497,6 +4506,7 @@ export class OpenClawController {
         values: read,
       };
     });
+    const config = source.config;
     const placed = await this.credentialNamespace(namespace);
     let status: CredentialSourceStatus;
     // A returned result means every gateway effect of this attempt has finished; a throw does not.
@@ -8052,6 +8062,7 @@ export class OpenClawController {
     const restrictionIds = snapshotIds(evidence?.restrictionIds);
     if (
       typeof allowed !== "boolean" ||
+      typeof reason !== "string" ||
       !isNonEmptyString(driverId) ||
       !evidence ||
       (identityId !== undefined && !isNonEmptyString(identityId)) ||

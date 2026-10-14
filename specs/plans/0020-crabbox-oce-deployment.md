@@ -1,18 +1,18 @@
 ---
-rfc: ../rfcs/0019-crabbox-oce-deployment.md
+rfc: ../rfcs/0020-crabbox-oce-deployment.md
 ---
 
 # Implementation plan: Deploy OCE development environments with Crabbox
 
-- **ID:** RFC-0019 (primary plan)
+- **ID:** RFC-0020 (primary plan)
 - **Delivery status:** Planned
 - **Owner:** OCE deployment and development-launcher contributors
-- **Authority:** [RFC-0019](../rfcs/0019-crabbox-oce-deployment.md)
+- **Authority:** [RFC-0020](../rfcs/0020-crabbox-oce-deployment.md)
 - **Source baseline:** Enterprise `3d180654c`; Crabbox `3d9260e7`; Tailscale `v1.104.1`
 
 ## Outcome and scope
 
-Deliver the RFC's [goals](../rfcs/0019-crabbox-oce-deployment.md#goals): run the
+Deliver the RFC's [goals](../rfcs/0020-crabbox-oce-deployment.md#goals): run the
 existing development profile on a remote host and make its normal console usable
 over the tailnet. Keep OCE authentication unchanged. Implementation starts after
 responsible maintainers accept the RFC and its deployment scope.
@@ -27,7 +27,7 @@ publication; it does not implement another deployment lifecycle.
 
 ### 1. Add the external-origin setting
 
-Implement [the RFC's origin contract](../rfcs/0019-crabbox-oce-deployment.md#console-origin-and-authentication)
+Implement [the RFC's origin contract](../rfcs/0020-crabbox-oce-deployment.md#console-origin-and-authentication)
 in `internal/occdev`, with the necessary entry-point checks in
 `internal/occcli/dev.go` and `scripts/dev-up`. Reuse one Go validator; shell
 startup delegates supported deployment to Go rather than duplicating URL parsing.
@@ -106,7 +106,7 @@ Create `.crabbox.yaml` using the existing job mechanism:
 
 | Job                    | Work                                                                                                  | Lease handling                           |
 | ---------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `oce-deploy`           | Hydrate a Linux amd64 host and run the wrapper's base deployment.                                     | Keep the lease after success or failure. |
+| `oce-deploy`           | Hydrate a lease from a qualifying provider and run the wrapper's base deployment.                     | Keep the lease after success or failure. |
 | `oce-deploy-tailscale` | Reuse the deployment job with required tailnet SSH and private publication.                           | Keep the lease after success or failure. |
 | `oce-teardown`         | Reuse the retained workspace/tool environment and run `down`, without new hydration or checkout sync. | Release only after successful cleanup.   |
 
@@ -136,14 +136,14 @@ actual delivery evidence supports it.
 Every check remains **Not run**. Record the implementation revision, host/provider,
 Tailscale version, results, and unavailable prerequisites.
 
-| RFC goal | Required proof                                                                                                                                                                                                      |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1        | Fresh managed and static installations covering Ubuntu 24.04/26.04 amd64. Existing launcher checks establish authenticated Installation access and Namespace readiness. Verify unsupported-host refusal.            |
-| 2        | A permitted second device opens the normal login page, signs in, uses an authorized resource, and logs out. Authentication and permission denials match local setup; denied/off-tailnet devices cannot connect.     |
-| 3        | Refuse missing tailnet SSH or certificate eligibility. Verify certificate/publication failure cleanup and useful recovery output.                                                                                   |
-| 4        | Extend existing launcher coverage for invalid origins, unsupported entry paths, and unchanged defaults. Exercise the configured origin through real k3d and tailnet access.                                         |
-| 5        | Verify explicit-lease teardown/redeployment, publication ownership, interruption recovery, unrelated configuration preservation, and partial cleanup failure. Confirm startup failure creates no Serve publication. |
-| 6        | Inspect actual job logs and artifact configuration for credential exposure; keep state private.                                                                                                                     |
+| RFC goal | Required proof                                                                                                                                                                                                                                                                     |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1        | Fresh installations on a `tailscale`-capable cloud provider, a second qualifying provider, and a static host, covering Ubuntu 24.04 and 26.04. Existing launcher checks establish authenticated Installation access and Namespace readiness. Verify refusal of a non-Ubuntu image. |
+| 2        | A permitted second device opens the normal login page, signs in, uses an authorized resource, and logs out. Authentication and permission denials match local setup; denied/off-tailnet devices cannot connect.                                                                    |
+| 3        | Refuse missing tailnet SSH or certificate eligibility. Verify certificate/publication failure cleanup and useful recovery output.                                                                                                                                                  |
+| 4        | Extend existing launcher coverage for invalid origins, unsupported entry paths, and unchanged defaults. Exercise the configured origin through real k3d and tailnet access.                                                                                                        |
+| 5        | Verify explicit-lease teardown/redeployment, publication ownership, interruption recovery, unrelated configuration preservation, and partial cleanup failure. Confirm startup failure creates no Serve publication.                                                                |
+| 6        | Inspect actual job logs and artifact configuration for credential exposure; keep state private.                                                                                                                                                                                    |
 
 Focused script checks can verify orchestration; they do not replace real launcher,
 host, browser, and tailnet proof. Required unrun outcomes keep delivery incomplete.

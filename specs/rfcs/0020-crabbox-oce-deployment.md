@@ -6,11 +6,11 @@ author: aitrawog
 
 # Proposal: Deploy OCE development environments with Crabbox
 
-- **ID:** RFC-0019
+- **ID:** RFC-0020
 - **Created:** 2026-10-12
 - **Last updated:** 2026-10-13
 - **RFC PR:** [opencharly/openclaw-enterprise#2](https://github.com/opencharly/openclaw-enterprise/pull/2)
-- **Implementation plan:** [RFC-0019 implementation plan](../plans/0019-crabbox-oce-deployment.md)
+- **Implementation plan:** [RFC-0020 implementation plan](../plans/0020-crabbox-oce-deployment.md)
 - **Source baseline:** Enterprise `3d180654c`; [Crabbox](https://github.com/openclaw/crabbox) `3d9260e7`; Tailscale `v1.104.1`
 
 <a id="problem-and-decision"></a>
@@ -43,7 +43,7 @@ installations easier to run.
 
 Each goal is required; the plan maps it to implementation and verification.
 
-1. A fresh managed lease or static host reaches launcher readiness, authenticated
+1. A fresh lease from a qualifying provider reaches launcher readiness, authenticated
    `occ installation get` succeeds, and the initial Namespace is ready. Refuse an
    unsupported host before OCE hydration changes packages or host settings;
    Crabbox allocation, bootstrap, and checkout sync precede this check.
@@ -73,8 +73,8 @@ admit this development-tooling scope; this proposal does not establish acceptanc
 - Keycloak sign-in, OpenShell, or native Agent admin through the tailnet. This
   first delivery selects the default password-only local profile; the optional
   profiles and per-Agent native hostnames need separate qualification.
-- Tailnet enrollment, concurrent installations on one host, or platforms other
-  than Ubuntu 24.04/26.04 amd64.
+- Tailnet enrollment, concurrent installations on one host, or providers that
+  cannot supply an Ubuntu 24.04/26.04 amd64 VM.
 
 <a id="design"></a>
 
@@ -90,6 +90,13 @@ admit this development-tooling scope; this proposal does not establish acceptanc
 | Tailnet operator                | Certificate eligibility, access policy, and exclusive configuration changes during job operations |
 
 ### Hosts and lifetime
+
+The caller selects any [Crabbox provider](https://crabbox.sh/features/providers.html)
+of kind `ssh-lease` that supplies an Ubuntu 24.04 or 26.04 amd64 VM, including a
+static `ssh` host. Container and delegated-run providers do not qualify, because
+hydration installs Docker and changes a kernel setting. The Tailscale job also
+needs a provider that advertises the `tailscale` feature, or a static host already
+on the tailnet. Hydration verifies the image before changing the host.
 
 Each dedicated host runs one installation. Hydration installs missing tools and
 applies the documented [Codex sandbox sysctl](../../docs/guides/operate/troubleshooting.md#local-codex-sandbox-check-fails).
@@ -190,7 +197,7 @@ and rollback. Publish Serve only after startup succeeds; failures before that
 point create no publication to clean up. Reuse existing tool installers and
 Crabbox's retained environment rather than adding parallel setup mechanisms.
 
-The [plan](../plans/0019-crabbox-oce-deployment.md) owns concrete changes and the
+The [plan](../plans/0020-crabbox-oce-deployment.md) owns concrete changes and the
 check for each goal. Nothing is implemented or runtime-qualified yet. Source
 review establishes the selected contracts, not a successful remote installation.
 
