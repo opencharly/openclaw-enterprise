@@ -8,10 +8,10 @@ author: aitrawog
 
 - **ID:** RFC-0020
 - **Created:** 2026-10-12
-- **Last updated:** 2026-10-13
-- **RFC PR:** [opencharly/openclaw-enterprise#2](https://github.com/opencharly/openclaw-enterprise/pull/2)
+- **Last updated:** 2026-10-14
+- **RFC PR:** [openclaw/openclaw-enterprise#2365](https://github.com/openclaw/openclaw-enterprise/pull/2365)
 - **Implementation plan:** [RFC-0020 implementation plan](../plans/0020-crabbox-oce-deployment.md)
-- **Source baseline:** Enterprise `3d180654c`; [Crabbox](https://github.com/openclaw/crabbox) `3d9260e7`; Tailscale `v1.104.1`
+- **Source baseline:** Enterprise `8642bef0e3a3`; [Crabbox](https://github.com/openclaw/crabbox) `3d9260e7`; Tailscale `v1.104.1`
 
 <a id="problem-and-decision"></a>
 
@@ -23,9 +23,9 @@ on a remote Linux host. `oce-deploy` prepares the host and starts the profile.
 `oce-deploy-tailscale` also publishes the normal console at the host's private
 HTTPS name. `oce-teardown` removes the installation and its Serve publication.
 
-Add one optional launcher setting, `OCC_DEVELOPMENT_BROWSER_ORIGIN`, for the
-external browser origin. Users authenticate and use the console exactly as in
-the selected local profile; tailnet access supplies the network path.
+Extend the local launcher to accept the existing `OCC_AUTH_BASE_URL` for the
+external browser origin and render it into the existing Helm `auth.baseUrl`.
+Users keep OCE password sign-in, sessions, and permissions over the tailnet.
 
 ## Motivation
 
@@ -89,6 +89,25 @@ admit this development-tooling scope; this proposal does not establish acceptanc
 | Launcher                        | Origin validation, cluster, credentials, startup checks, and rollback                             |
 | Tailnet operator                | Certificate eligibility, access policy, and exclusive configuration changes during job operations |
 
+### Selected local deployment
+
+Use the [Local Setup](../../docs/guides/quickstart.md#start-the-local-stack)
+profile on the remote host:
+
+```sh
+export OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes
+export OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes
+export OCC_DEVELOPMENT_CONTAINER_ENGINE=docker
+export OCC_DEVELOPMENT_SANDBOX_DRIVER=none
+unset OCC_DEVELOPMENT_SIGN_IN
+```
+
+Both Compute and control-plane selectors are required. The launcher creates its
+own k3d cluster, PostgreSQL, routing controllers, and Helm-installed OCC; it also
+owns bootstrap and cleanup. This is local development on the leased host, not
+[production installation](../../docs/guides/deploy/production-installation.md)
+into an existing cluster. Compose control-plane profiles are outside this proposal.
+
 ### Hosts and lifetime
 
 The caller selects any [Crabbox provider](https://crabbox.sh/features/providers.html)
@@ -111,22 +130,31 @@ lease does not extend its lifetime. Use a static host for persistent development
 
 ### Console origin and authentication
 
-`OCC_DEVELOPMENT_BROWSER_ORIGIN` accepts a normalized HTTPS origin with a host
-and optional valid port, without credentials, query, fragment, or a non-root
-path. It is supported only with Kubernetes-only control plane, sandbox `none`,
-and default password sign-in. The launcher sets `auth.baseUrl`, omits
-`agentNativeAdmin`, and prints `<origin>/console/`.
+OCE already consumes `OCC_AUTH_BASE_URL` for authentication. The selected local
+launcher currently generates `auth.baseUrl` from its `.oce.localhost` hostname
+and does not consume a caller's export. Add that launcher input, restricted to
+the profile above, before the first Helm install. Accept an HTTPS origin with a
+host and valid optional port; reject credentials, query, fragment, and non-root
+paths, and normalize the default port. Unset input keeps Local Setup behavior.
 
-Existing browser-origin and session checks use that origin; OCE authentication
-and authorization rules remain unchanged. The login page remains available
-before sign-in. Tailnet membership does not enroll an OCE account or grant access.
-Bootstrap password and service-key files remain in the private launcher state.
+Set `auth.baseUrl` to the validated origin, set `agentNativeAdmin.enabled: false`,
+omit the shared cookie domain, and print `<origin>/console/`. Keep private gateway
+routing and the loopback API. The chart already runs OCC with `NODE_ENV=production`
+inside this development cluster and passes the URL to API and bootstrap; no
+controller development-mode admission change is needed.
 
-Password-only startup does not call the console over HTTPS;
-[`newDevelopmentConsole`](../../internal/occdev/keycloak_k3d.go) belongs to the
-excluded Keycloak flow. The existing development browser proxy terminates TLS
-and forwards HTTP to the API. It requires no ingress hostname change. The API
-normalizes `auth.baseUrl` using `URL.origin`, so default HTTPS needs no `:443`.
+Existing sign-in and session-mutation guards require the browser's exact origin.
+Tailnet membership grants no OCE identity or permissions. Bootstrap credentials
+remain in private launcher state. With the external origin selected, the old
+localhost HTTPS endpoint is not a second supported browser login; loopback CLI
+service-key access remains available. The base job leaves `OCC_AUTH_BASE_URL`
+unset and retains the documented tunnel and development-CA procedure.
+
+Password-only startup verifies the loopback API and service key, not the external
+HTTPS console, so Serve can start afterward. `newDevelopmentConsole` belongs to
+the excluded Keycloak flow. At the reviewed revision, the similarly named
+`OCC_DEVELOPMENT_BROWSER_ORIGIN` is generated internally by Compose/OpenShell;
+it is not a supported external-origin input for this profile.
 
 ### Tailnet publication
 
@@ -143,8 +171,8 @@ loopback. Its [TCP path](https://github.com/tailscale/tailscale/blob/v1.104.1/ip
 does not inject HTTP forwarding or identity headers. Do not enable PROXY protocol,
 HTTP reverse-proxy mode, or Funnel. This preserves OCC's existing refusal of
 untrusted forwarded headers without adding proxy trust or skipping a certificate
-check. The local HTTPS console on port 8443 remains available to the base job's
-SSH-tunnel procedure.
+check. Forwarding does not supply the original browser IP for per-client sign-in
+limits; the existing password-authentication limits still apply.
 
 The job must refuse conflicting Serve or Funnel configuration on port 443,
 preserve unrelated configuration and operator replacements, and remove only its
@@ -209,8 +237,13 @@ review establishes the selected contracts, not a successful remote installation.
   and development CA.
 - **Serve HTTP reverse proxy:** adds forwarded headers, which OCC rejects unless
   proxy trust is configured. TCP forwarding avoids changing that admission policy.
-- **Serve without the origin setting:** the browser's tailnet origin fails OCE's
-  existing origin checks.
+- **Serve without changing the configured origin:** the tailnet Origin fails
+  existing checks. Proxy trust and Agent `controlUi.allowedOrigins` do not change
+  the OCC console's authentication origin.
+- **Production Helm values:** already select an external `auth.baseUrl`, but the
+  production procedure does not provide the local launcher's lifecycle. Keep
+  configuration selection in the launcher rather than adding a second Helm
+  upgrade to the wrapper.
 - **Direct tailnet listener:** changes the loopback boundary and still requires
   client CA trust.
 - **Separate provisioning script:** duplicates Crabbox's lease and hydration work.

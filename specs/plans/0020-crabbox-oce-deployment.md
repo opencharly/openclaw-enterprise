@@ -8,7 +8,7 @@ rfc: ../rfcs/0020-crabbox-oce-deployment.md
 - **Delivery status:** Planned
 - **Owner:** OCE deployment and development-launcher contributors
 - **Authority:** [RFC-0020](../rfcs/0020-crabbox-oce-deployment.md)
-- **Source baseline:** Enterprise `3d180654c`; Crabbox `3d9260e7`; Tailscale `v1.104.1`
+- **Source baseline:** Enterprise `8642bef0e3a3`; Crabbox `3d9260e7`; Tailscale `v1.104.1`
 
 ## Outcome and scope
 
@@ -25,21 +25,34 @@ publication; it does not implement another deployment lifecycle.
 
 ## Implementation
 
-### 1. Add the external-origin setting
+### 1. Reuse the authentication URL in the local launcher
 
 Implement [the RFC's origin contract](../rfcs/0020-crabbox-oce-deployment.md#console-origin-and-authentication)
-in `internal/occdev`, with the necessary entry-point checks in
-`internal/occcli/dev.go` and `scripts/dev-up`. Reuse one Go validator; shell
-startup delegates supported deployment to Go rather than duplicating URL parsing.
+by accepting the existing `OCC_AUTH_BASE_URL` as a new local-launcher input.
+Trace both entry points: `scripts/dev-up` delegates Kubernetes startup to
+`internal/occcli/dev.go`, then `occdev.Up` selects `upK3d` for the Kubernetes
+control plane. This owns a local k3d cluster; it is not the production procedure
+for installing into an existing cluster. Docker is the container engine, not
+this profile's Compute driver. Compose control-plane profiles are excluded.
 
-Use the supplied HTTPS origin for `auth.baseUrl` and the printed console URL.
-Disable native Agent admin for this mode. Preserve existing default host selection
-and behavior when unset. Reject invalid values and unsupported profiles before
-deployment effects. Reuse existing launcher coverage for these changes.
+Reuse one Go validator before deployment side effects. Reject invalid or explicitly
+empty inputs and unsupported profiles through both CLI and script entry points.
+Accept and normalize the RFC's HTTPS origin syntax. Preserve defaults when unset.
+Do not change backend authentication admission or the separately generated
+Compose/OpenShell `OCC_DEVELOPMENT_BROWSER_ORIGIN`.
 
-The setting remains necessary: TCP forwarding preserves the browser's tailnet
-Origin, while OCE's existing sign-in and session checks require the configured
-application origin. No authentication or proxy-trust change is needed.
+In the first generated Helm values, select the override instead of overwriting it
+with the localhost hostname. Set `auth.baseUrl`, disable `agentNativeAdmin`, omit
+the shared cookie domain, and preserve private `gatewayRouting` and the loopback
+API. The chart already passes `OCC_AUTH_BASE_URL` to API and bootstrap with
+`NODE_ENV=production`, including in this local development cluster. Print the
+external console URL. Keep password-only startup's loopback API, service-key,
+Installation, and Namespace checks independent of Serve publication.
+
+The backend setting exists today; caller support in this launcher does not.
+Exporting it alone currently has no effect on this path. Neither trusted proxies
+nor Agent `controlUi.allowedOrigins` replaces the console's configured origin.
+Do not add a second wrapper Helm upgrade or a new backend authentication setting.
 
 ### 2. Reuse prerequisite setup
 
@@ -61,7 +74,10 @@ Use its supported local steps and a `workflow_dispatch` trigger.
 Check the RFC's host prerequisites before OCE host preparation. Install missing
 Docker/tool packages, enable working Docker access, and apply the documented
 Codex sandbox host setting. Use the CI-pinned Node version and repository-pinned
-pnpm. Reuse the existing k3d profile and publish readiness only after setup succeeds.
+pnpm. Verify quickstart disk capacity and required ports. After changing Docker
+group membership, verify access in a fresh SSH session; the current shell does
+not acquire new supplementary groups. Reuse the k3d profile and publish readiness
+only after setup succeeds.
 
 Persist tool paths through Crabbox's canonical non-secret `ENV_FILE`, including
 paths supplied by the existing setup helpers. Later runs reuse this environment;
@@ -71,15 +87,22 @@ not appropriate here because it stops and replaces the host daemon.
 ### 4. Add the thin deployment wrapper
 
 Add `scripts/crabbox/oce-dev` with `up [--tailscale]` and `down` commands. Select
-the Kubernetes-only, Docker, sandbox-`none`, password-sign-in profile and an owned
-private state directory. Keep the publication target consistent with the
+`OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes`,
+`OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes`,
+`OCC_DEVELOPMENT_CONTAINER_ENGINE=docker`, and
+`OCC_DEVELOPMENT_SANDBOX_DRIVER=none`; unset `OCC_DEVELOPMENT_SIGN_IN`.
+Use an owned private state directory outside the synchronized checkout.
+Keep publication recovery records outside launcher state, because `dev down`
+removes that directory. Keep the publication target consistent with the
 launcher's API port. Use ordinary Linux locking for wrapper operations and leave
 the launcher's own state lock intact.
 
 For `up`:
 
 1. Validate the selected configuration. With Tailscale, derive the external origin
-   from the certificate-eligible machine name and refuse conflicting publication.
+   from the certificate-eligible machine name, pass it as `OCC_AUTH_BASE_URL`,
+   and refuse conflicting publication or inherited URL values. The base job
+   explicitly unsets the URL override.
 2. Install locked dependencies, build the CLI, and run `scripts/dev-up`. Reuse its
    authenticated readiness checks and rollback; do not duplicate them or parse
    human-readable output to establish readiness.
@@ -110,6 +133,9 @@ Create `.crabbox.yaml` using the existing job mechanism:
 | `oce-deploy-tailscale` | Reuse the deployment job with required tailnet SSH and private publication.                           | Keep the lease after success or failure. |
 | `oce-teardown`         | Reuse the retained workspace/tool environment and run `down`, without new hydration or checkout sync. | Release only after successful cleanup.   |
 
+Set deploy jobs to `stop: never` and teardown to `stop: success`. Teardown uses
+`noSync: true` and omits hydration, preserving the retained workspace and tools.
+
 The caller selects the provider. Deploy jobs request the RFC's bounded managed
 lifetime; static hosts provide persistent use. Validate job expansion with
 Crabbox's job-list and dry-run commands.
@@ -123,8 +149,11 @@ credential-bearing state as artifacts.
 Update the development setting reference and environment-variable cheat sheet.
 Add a remote development guide under `docs/guides/deploy/`, register it in
 `docs.json`, and link it from local development and remote-console troubleshooting.
-Explain supported hosts/profile, unchanged local login, private credential access,
-lease lifetime/reuse, and teardown/recovery.
+Explain supported hosts/profile, unchanged password authentication, private
+credential access, lease lifetime/reuse, and teardown/recovery. Distinguish local
+k3d from production installation and Compose. Explain that the tailnet origin
+is the single supported browser login in that mode; localhost service-key CLI
+access remains. The base job retains the tunnel and development-CA procedure.
 
 Update `docs/layout.md` and the owning launcher flow as
 [local-dev](../../.agents/skills/local-dev/SKILL.md) requires. Current procedures
@@ -133,17 +162,17 @@ actual delivery evidence supports it.
 
 ## Verification
 
-Every check remains **Not run**. Record the implementation revision, host/provider,
+Implementation acceptance checks remain **Not run**. Record the implementation revision, host/provider,
 Tailscale version, results, and unavailable prerequisites.
 
-| RFC goal | Required proof                                                                                                                                                                                                                                                                     |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1        | Fresh installations on a `tailscale`-capable cloud provider, a second qualifying provider, and a static host, covering Ubuntu 24.04 and 26.04. Existing launcher checks establish authenticated Installation access and Namespace readiness. Verify refusal of a non-Ubuntu image. |
-| 2        | A permitted second device opens the normal login page, signs in, uses an authorized resource, and logs out. Authentication and permission denials match local setup; denied/off-tailnet devices cannot connect.                                                                    |
-| 3        | Refuse missing tailnet SSH or certificate eligibility. Verify certificate/publication failure cleanup and useful recovery output.                                                                                                                                                  |
-| 4        | Extend existing launcher coverage for invalid origins, unsupported entry paths, and unchanged defaults. Exercise the configured origin through real k3d and tailnet access.                                                                                                        |
-| 5        | Verify explicit-lease teardown/redeployment, publication ownership, interruption recovery, unrelated configuration preservation, and partial cleanup failure. Confirm startup failure creates no Serve publication.                                                                |
-| 6        | Inspect actual job logs and artifact configuration for credential exposure; keep state private.                                                                                                                                                                                    |
+| RFC goal | Required proof                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1        | Fresh installations on a `tailscale`-capable cloud provider, a second qualifying provider, and a static host, covering Ubuntu 24.04 and 26.04. Existing launcher checks establish authenticated Installation access and Namespace readiness. Verify refusal of a non-Ubuntu image.                                                                                                                                                  |
+| 2        | A permitted second device opens the normal login page, signs in, uses an authorized resource, and logs out. Authentication and permission denials match local setup; denied/off-tailnet devices cannot connect.                                                                                                                                                                                                                     |
+| 3        | Refuse missing tailnet SSH or certificate eligibility. Verify certificate/publication failure cleanup and useful recovery output.                                                                                                                                                                                                                                                                                                   |
+| 4        | Extend existing launcher coverage for invalid origins, unsupported entry paths, and unchanged defaults. Verify generated API/bootstrap URLs, native admin disabled, cookie domain omitted, and routing retained. Exercise real k3d and tailnet access; refuse foreign and former localhost browser origins while loopback service-key CLI still works. Complete an Agent model/workspace operation to prove routing remains usable. |
+| 5        | Verify explicit-lease teardown/redeployment, publication ownership, interruption recovery, unrelated configuration preservation, and partial cleanup failure. Confirm startup failure creates no Serve publication.                                                                                                                                                                                                                 |
+| 6        | Inspect actual job logs and artifact configuration for credential exposure; keep state private.                                                                                                                                                                                                                                                                                                                                     |
 
 Focused script checks can verify orchestration; they do not replace real launcher,
 host, browser, and tailnet proof. Required unrun outcomes keep delivery incomplete.
@@ -151,7 +180,14 @@ Use documentation checks, without product tests, for this proposal.
 
 ## Delivery record
 
-Not started.
+Not started. Source review at Enterprise `8642bef0e3a3` traced local startup,
+Helm rendering, authentication guards, and loopback readiness. Configuration and
+Helm probes support this design; they do not qualify the unimplemented launcher
+input, Crabbox jobs, or remote browser flow. Rendering the current chart with an
+existing local k3d installation's values and the proposed override also passed.
+A separate existing local deployment passed HTTPS, password sign-in/sign-out,
+foreign-origin refusal, and service-key Installation access checks. Its older
+image is not qualification of the reviewed main revision or the proposed jobs.
 
 ## Manual Notes
 
@@ -162,3 +198,4 @@ Not started.
 - 2026-10-13: Authored against Enterprise `3d180654c` and Crabbox `3d9260e7`.
 - 2026-10-13: Align all RFC goals with concrete steps/checks; preserve local authentication, select header-free TCP publication, and specify credential inputs, validation, ownership, and failure recovery (Tailscale `v1.104.1`).
 - 2026-10-13: Reuse launcher readiness, k3d/download helpers, and Crabbox environment; publish after startup. Keep implementation mechanics in implementation rather than prescribing them here.
+- 2026-10-14: Recheck current local k3d code and quickstart; reuse `OCC_AUTH_BASE_URL` through a new launcher input, preserve routing/readiness, and distinguish the single browser origin from loopback CLI access. Specify profile, hydration, job cleanup, and acceptance checks.
