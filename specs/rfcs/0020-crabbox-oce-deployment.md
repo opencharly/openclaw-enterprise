@@ -23,9 +23,11 @@ on a remote Linux host. `oce-deploy` prepares the host and starts the profile.
 `oce-deploy-tailscale` also publishes the normal console at the host's private
 HTTPS name. `oce-teardown` removes the installation and its Serve publication.
 
-Extend the local launcher to accept the existing `OCC_AUTH_BASE_URL` for the
-external browser origin and render it into the existing Helm `auth.baseUrl`.
-Users keep OCE password sign-in, sessions, and permissions over the tailnet.
+Authentication stays exactly as in [Local Setup](../../docs/guides/quickstart.md):
+the administrator signs in with email and password. The only change is that the
+login works through the tailnet. The local launcher accepts the existing
+`OCC_AUTH_BASE_URL` as the browser origin instead of always generating its
+`.oce.localhost` origin.
 
 ## Motivation
 
@@ -70,9 +72,11 @@ admit this development-tooling scope; this proposal does not establish acceptanc
 ## Non-goals
 
 - Production installation, public exposure through Funnel, or new authentication.
-- Keycloak sign-in, OpenShell, or native Agent admin through the tailnet. This
-  first delivery selects the default password-only local profile; the optional
-  profiles and per-Agent native hostnames need separate qualification.
+- Keycloak sign-in or OpenShell. This first delivery selects the default
+  password-only local profile; the optional profiles need separate qualification.
+- Opening per-Agent native admin hosts over the tailnet. MagicDNS and Serve
+  provide one machine name, not per-Agent subdomains. Native admin stays enabled
+  as in Local Setup.
 - Tailnet enrollment, concurrent installations on one host, or providers that
   cannot supply an Ubuntu 24.04/26.04 amd64 VM.
 
@@ -130,25 +134,31 @@ lease does not extend its lifetime. Use a static host for persistent development
 
 ### Console origin and authentication
 
+Sign-in is unchanged from Local Setup: `admin@development.openclaw.invalid`
+with the generated password from the private administrator password file. No
+new authentication mechanism, identity provider, or proxy trust is added.
+Tailnet membership grants no OCE identity or permissions.
+
 OCE already consumes `OCC_AUTH_BASE_URL` for authentication. The selected local
-launcher currently generates `auth.baseUrl` from its `.oce.localhost` hostname
+launcher currently generates `auth.baseUrl` from `console.<cluster>.oce.localhost`
 and does not consume a caller's export. Add that launcher input, restricted to
 the profile above, before the first Helm install. Accept an HTTPS origin with a
 host and valid optional port; reject credentials, query, fragment, and non-root
 paths, and normalize the default port. Unset input keeps Local Setup behavior.
 
-Set `auth.baseUrl` to the validated origin, set `agentNativeAdmin.enabled: false`,
-omit the shared cookie domain, and print `<origin>/console/`. Keep private gateway
-routing and the loopback API. The chart already runs OCC with `NODE_ENV=production`
-inside this development cluster and passes the URL to API and bootstrap; no
-controller development-mode admission change is needed.
+OCC accepts exactly one browser origin, and the chart and controller require the
+shared cookie domain to contain that origin's host. With the override set, the
+launcher therefore derives the shared cookie domain from the override host and
+the native admin domain as `agents.<override host>`, instead of
+`<cluster>.oce.localhost`. Native admin, shared session cookies, private gateway
+routing, and the loopback API stay enabled exactly as in Local Setup. The
+launcher prints `<origin>/console/`. The chart already passes the URL to API and
+bootstrap; no controller change is needed.
 
-Existing sign-in and session-mutation guards require the browser's exact origin.
-Tailnet membership grants no OCE identity or permissions. Bootstrap credentials
-remain in private launcher state. With the external origin selected, the old
-localhost HTTPS endpoint is not a second supported browser login; loopback CLI
-service-key access remains available. The base job leaves `OCC_AUTH_BASE_URL`
-unset and retains the documented tunnel and development-CA procedure.
+Because OCC has one browser origin, the localhost console no longer accepts
+browser sign-in while the tailnet origin is selected; loopback CLI service-key
+access remains. The base job leaves `OCC_AUTH_BASE_URL` unset and keeps the
+documented tunnel and development-CA procedure.
 
 Password-only startup verifies the loopback API and service key, not the external
 HTTPS console, so Serve can start afterward. `newDevelopmentConsole` belongs to
@@ -252,4 +262,4 @@ review establishes the selected contracts, not a successful remote installation.
 
 - [Specification process](../../docs/contributing/specifications.md)
 - [Development settings](../../docs/reference/settings/development.md)
-- [Local Setup](https://docs-enterprise.openclaw.org/guides/quickstart/)
+- [Local Setup](../../docs/guides/quickstart.md)

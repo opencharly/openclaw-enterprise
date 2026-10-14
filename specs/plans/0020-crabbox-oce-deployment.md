@@ -42,11 +42,13 @@ Do not change backend authentication admission or the separately generated
 Compose/OpenShell `OCC_DEVELOPMENT_BROWSER_ORIGIN`.
 
 In the first generated Helm values, select the override instead of overwriting it
-with the localhost hostname. Set `auth.baseUrl`, disable `agentNativeAdmin`, omit
-the shared cookie domain, and preserve private `gatewayRouting` and the loopback
-API. The chart already passes `OCC_AUTH_BASE_URL` to API and bootstrap with
-`NODE_ENV=production`, including in this local development cluster. Print the
-external console URL. Keep password-only startup's loopback API, service-key,
+with the localhost hostname. Set `auth.baseUrl` to the override and derive
+`agentNativeAdmin.sharedCookieDomain` from its host and `agentNativeAdmin.domain`
+as `agents.<override host>` in `developmentBrowserHosts`, so the chart's and
+controller's cookie-domain checks pass. Keep `agentNativeAdmin` enabled, shared
+session cookies, private `gatewayRouting`, the bootstrap administrator, password
+sign-in, and the loopback API exactly as in Local Setup. Print the external
+console URL. Keep password-only startup's loopback API, service-key,
 Installation, and Namespace checks independent of Serve publication.
 
 The backend setting exists today; caller support in this launcher does not.
@@ -149,7 +151,7 @@ credential-bearing state as artifacts.
 Update the development setting reference and environment-variable cheat sheet.
 Add a remote development guide under `docs/guides/deploy/`, register it in
 `docs.json`, and link it from local development and remote-console troubleshooting.
-Explain supported hosts/profile, unchanged password authentication, private
+Explain supported hosts/profile, password authentication identical to Local Setup, private
 credential access, lease lifetime/reuse, and teardown/recovery. Distinguish local
 k3d from production installation and Compose. Explain that the tailnet origin
 is the single supported browser login in that mode; localhost service-key CLI
@@ -165,14 +167,14 @@ actual delivery evidence supports it.
 Implementation acceptance checks remain **Not run**. Record the implementation revision, host/provider,
 Tailscale version, results, and unavailable prerequisites.
 
-| RFC goal | Required proof                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1        | Fresh installations on a `tailscale`-capable cloud provider, a second qualifying provider, and a static host, covering Ubuntu 24.04 and 26.04. Existing launcher checks establish authenticated Installation access and Namespace readiness. Verify refusal of a non-Ubuntu image.                                                                                                                                                  |
-| 2        | A permitted second device opens the normal login page, signs in, uses an authorized resource, and logs out. Authentication and permission denials match local setup; denied/off-tailnet devices cannot connect.                                                                                                                                                                                                                     |
-| 3        | Refuse missing tailnet SSH or certificate eligibility. Verify certificate/publication failure cleanup and useful recovery output.                                                                                                                                                                                                                                                                                                   |
-| 4        | Extend existing launcher coverage for invalid origins, unsupported entry paths, and unchanged defaults. Verify generated API/bootstrap URLs, native admin disabled, cookie domain omitted, and routing retained. Exercise real k3d and tailnet access; refuse foreign and former localhost browser origins while loopback service-key CLI still works. Complete an Agent model/workspace operation to prove routing remains usable. |
-| 5        | Verify explicit-lease teardown/redeployment, publication ownership, interruption recovery, unrelated configuration preservation, and partial cleanup failure. Confirm startup failure creates no Serve publication.                                                                                                                                                                                                                 |
-| 6        | Inspect actual job logs and artifact configuration for credential exposure; keep state private.                                                                                                                                                                                                                                                                                                                                     |
+| RFC goal | Required proof                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1        | Fresh installations on a `tailscale`-capable cloud provider, a second qualifying provider, and a static host, covering Ubuntu 24.04 and 26.04. Existing launcher checks establish authenticated Installation access and Namespace readiness. Verify refusal of a non-Ubuntu image.                                                                                                                                                                                                 |
+| 2        | A permitted second device opens the normal login page, signs in, uses an authorized resource, and logs out. Authentication and permission denials match local setup; denied/off-tailnet devices cannot connect.                                                                                                                                                                                                                                                                    |
+| 3        | Refuse missing tailnet SSH or certificate eligibility. Verify certificate/publication failure cleanup and useful recovery output.                                                                                                                                                                                                                                                                                                                                                  |
+| 4        | Extend existing launcher coverage for invalid origins, unsupported entry paths, and unchanged defaults. Verify generated API/bootstrap URLs, native admin still enabled with the cookie and native admin domains under the override host, and routing retained. Exercise real k3d and tailnet access; refuse foreign and former localhost browser origins while loopback service-key CLI still works. Complete an Agent model/workspace operation to prove routing remains usable. |
+| 5        | Verify explicit-lease teardown/redeployment, publication ownership, interruption recovery, unrelated configuration preservation, and partial cleanup failure. Confirm startup failure creates no Serve publication.                                                                                                                                                                                                                                                                |
+| 6        | Inspect actual job logs and artifact configuration for credential exposure; keep state private.                                                                                                                                                                                                                                                                                                                                                                                    |
 
 Focused script checks can verify orchestration; they do not replace real launcher,
 host, browser, and tailnet proof. Required unrun outcomes keep delivery incomplete.
@@ -183,8 +185,10 @@ Use documentation checks, without product tests, for this proposal.
 Not started. Source review at Enterprise `8642bef0e3a3` traced local startup,
 Helm rendering, authentication guards, and loopback readiness. Configuration and
 Helm probes support this design; they do not qualify the unimplemented launcher
-input, Crabbox jobs, or remote browser flow. Rendering the current chart with an
-existing local k3d installation's values and the proposed override also passed.
+input, Crabbox jobs, or remote browser flow. Rendering the current chart with a
+tailnet `auth.baseUrl`, native admin enabled, and the cookie and native admin
+domains under that host passed; keeping the `.oce.localhost` cookie domain with a
+tailnet origin fails the chart's cookie-domain check.
 A separate existing local deployment passed HTTPS, password sign-in/sign-out,
 foreign-origin refusal, and service-key Installation access checks. Its older
 image is not qualification of the reviewed main revision or the proposed jobs.
@@ -199,3 +203,4 @@ image is not qualification of the reviewed main revision or the proposed jobs.
 - 2026-10-13: Align all RFC goals with concrete steps/checks; preserve local authentication, select header-free TCP publication, and specify credential inputs, validation, ownership, and failure recovery (Tailscale `v1.104.1`).
 - 2026-10-13: Reuse launcher readiness, k3d/download helpers, and Crabbox environment; publish after startup. Keep implementation mechanics in implementation rather than prescribing them here.
 - 2026-10-14: Recheck current local k3d code and quickstart; reuse `OCC_AUTH_BASE_URL` through a new launcher input, preserve routing/readiness, and distinguish the single browser origin from loopback CLI access. Specify profile, hydration, job cleanup, and acceptance checks.
+- 2026-10-14: Keep Local Setup authentication unchanged: email and password sign-in, native admin, and shared session cookies stay enabled. Only the browser origin and the cookie and native admin domains move to the tailnet host.
