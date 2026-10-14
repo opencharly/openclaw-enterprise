@@ -290,6 +290,7 @@ export {
   ConfigurationHarnessError,
   configurationSettingMessage,
   CredentialGatewayNotConfiguredError,
+  CredentialSourceConfigError,
   CredentialSourceDriverError,
   CredentialSourceRevisionError,
   CredentialSourceTypeNotOfferedError,
@@ -357,6 +358,7 @@ export {
 } from "./native-worker-support.ts";
 export {
   backendDefinitionMap,
+  gatewayEndpointRewritesIpv4,
   validateBackendDefinitions,
   validateSelectedBackendDrivers,
   validateServiceAccountBackendBinding,
@@ -393,6 +395,8 @@ export {
   type TransactionalAuditWriter,
 } from "./state/platform-state.ts";
 export { resolveConfiguredHarnessId } from "./configured-harness.ts";
+export { imageReferenceProblem } from "./image-reference.ts";
+export type { ImageReferenceProblem } from "./image-reference.ts";
 export {
   environmentReference,
   invalidHeaderNameRequirement,
@@ -4453,7 +4457,7 @@ export class OpenClawController {
     if (!isName(input.name)) {
       throw new ScopeViolationError("The credential source name is invalid.");
     }
-    const config = Object.freeze({ ...(input.config ?? {}) });
+    const written = Object.freeze({ ...(input.config ?? {}) });
     const secretRefs = Object.freeze({ ...(input.secrets ?? {}) });
     this.namespaceIdentity(input.namespaceId);
     const { namespace, gateway, refresh, source, values } = await this.mutate(async (state) => {
@@ -4470,8 +4474,14 @@ export class OpenClawController {
       }
       const selected = this.credentialGatewayDriver();
       const type = await this.credentialSourceType(selected, input.type);
-      credentialSourceFieldsMatch("config", type.config, config);
+      credentialSourceFieldsMatch("config", type.config, written);
       credentialSourceFieldsMatch("secrets", type.secrets, secretRefs);
+      // The Driver may return the configuration in the form it uses, such as a normalized URL:
+      // the stored record, the response and the gateway then agree (finding 1292).
+      const config = Object.freeze({
+        ...(selected.validateSourceConfig({ type: type.type, config: written }) ?? written),
+      });
+      credentialSourceFieldsMatch("config", type.config, config);
       const refreshDriver =
         type.rotation === "refresh" ? this.credentialRefreshDriver() : undefined;
       const read = await this.readCredentialSourceSecrets(state, principalId, locked, secretRefs);
@@ -4496,6 +4506,7 @@ export class OpenClawController {
         values: read,
       };
     });
+    const config = source.config;
     const placed = await this.credentialNamespace(namespace);
     let status: CredentialSourceStatus;
     // A returned result means every gateway effect of this attempt has finished; a throw does not.
@@ -8051,6 +8062,7 @@ export class OpenClawController {
     const restrictionIds = snapshotIds(evidence?.restrictionIds);
     if (
       typeof allowed !== "boolean" ||
+      typeof reason !== "string" ||
       !isNonEmptyString(driverId) ||
       !evidence ||
       (identityId !== undefined && !isNonEmptyString(identityId)) ||

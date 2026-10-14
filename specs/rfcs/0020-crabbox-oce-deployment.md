@@ -6,11 +6,11 @@ author: aitrawog
 
 # Proposal: Deploy OCE development environments with Crabbox
 
-- **ID:** RFC-0019
+- **ID:** RFC-0020
 - **Created:** 2026-10-12
 - **Last updated:** 2026-10-13
 - **RFC PR:** [opencharly/openclaw-enterprise#2](https://github.com/opencharly/openclaw-enterprise/pull/2)
-- **Implementation plan:** [RFC-0019 implementation plan](../plans/0019-crabbox-oce-deployment.md)
+- **Implementation plan:** [RFC-0020 implementation plan](../plans/0020-crabbox-oce-deployment.md)
 - **Source baseline:** Enterprise `3d180654c`; [Crabbox](https://github.com/openclaw/crabbox) `3d9260e7`; Tailscale `v1.104.1`
 
 <a id="problem-and-decision"></a>
@@ -197,7 +197,7 @@ and rollback. Publish Serve only after startup succeeds; failures before that
 point create no publication to clean up. Reuse existing tool installers and
 Crabbox's retained environment rather than adding parallel setup mechanisms.
 
-The [plan](../plans/0019-crabbox-oce-deployment.md) owns concrete changes and the
+The [plan](../plans/0020-crabbox-oce-deployment.md) owns concrete changes and the
 check for each goal. Nothing is implemented or runtime-qualified yet. Source
 review establishes the selected contracts, not a successful remote installation.
 
