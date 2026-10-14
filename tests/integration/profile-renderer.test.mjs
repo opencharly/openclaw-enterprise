@@ -2710,6 +2710,14 @@ test("the codex profile carries a Codex model endpoint under Compute startup's r
   const compute = loadYaml(accepted.installation).drivers.compute.configuration;
   // Written as Compute normalizes it, and accepted by Compute startup.
   assert.equal(compute.runtime.codexModelBaseUrl, "https://models.example.com/v1");
+  const backslashScheme = render(
+    "codex",
+    codexInput({ runtime: { codexModelBaseUrl: "https:\\\\192.0.2.1/v1" } }),
+  );
+  assert.equal(
+    loadYaml(backslashScheme.installation).drivers.compute.configuration.runtime.codexModelBaseUrl,
+    "https://192.0.2.1/v1",
+  );
   KubernetesComputeDriver.validateConfiguration(compute);
   assert.equal(
     loadYaml(render("codex", codexInput()).installation).drivers.compute.configuration.runtime
@@ -2740,6 +2748,20 @@ test("the codex profile carries a Codex model endpoint under Compute startup's r
     ["https://models.example.com:0/v1", general],
     ["https://models.example.com/v1?key=1", general],
     ["https://models.example.com/v1#v1", general],
+    [
+      "https://192.168.1/v1",
+      "IPv4 host must be four decimal octets from 0 to 255 with no leading zeros; other spellings parse as a different address.",
+    ],
+    [
+      "https://2130706433/v1",
+      "IPv4 host must be four decimal octets from 0 to 255 with no leading zeros; other spellings parse as a different address.",
+    ],
+    [
+      "https://127.1/v1",
+      "IPv4 host must be four decimal octets from 0 to 255 with no leading zeros; other spellings parse as a different address.",
+    ],
+    // A spelling refusal comes first, whatever host the parser would read.
+    ["https:/192.168.1/v1", "must start with https:// (the // after the scheme is missing)."],
   ]) {
     assertFieldRefusals("codex", codexInput(), field, [value], message);
     assert.throws(

@@ -13,6 +13,7 @@ import {
 
 import {
   normalizeOpenAiBaseUrl,
+  openAiBaseUrlRewritesIpv4,
   openAiBaseUrlSpellingMessage,
 } from "../apps/controller/src/drivers/openai-endpoint.ts";
 import { isBackendId, isName, NAME_RULE } from "../packages/contracts/src/api/plain-text.ts";
@@ -305,6 +306,14 @@ function asString(source, path, diagnostics, { pattern, validate, description } 
 function codexModelBaseUrl(runtime, diagnostics) {
   const field = "runtime.codexModelBaseUrl";
   const value = asString(runtime, field.split("."), diagnostics);
+  // Normalize only after the raw spelling is accepted. `https://192.168.1/v1` would otherwise
+  // become `https://192.168.0.1/v1` and pass Compute.
+  if (typeof value === "string" && value !== "" && openAiBaseUrlRewritesIpv4(value)) {
+    diagnostics.errors.push(
+      `${field} IPv4 host must be four decimal octets from 0 to 255 with no leading zeros; other spellings parse as a different address.`,
+    );
+    return value;
+  }
   const url = normalizeOpenAiBaseUrl(value);
   if (url === undefined && value !== "") {
     diagnostics.errors.push(
@@ -412,17 +421,17 @@ function httpOrigin(value) {
 }
 
 // The same rule as the chart and OCC_AUTH_BASE_URL: a leading zero is octal, and
-// hex, shorthand, a single integer or a trailing dot publish a different host. Callers refuse
-// user info first (writtenUserinfo), so the host follows scheme:// directly.
+// hex, shorthand, a single integer or a trailing dot publish a different host. isIP accepts
+// only four decimal octets from 0 to 255 with no leading zeros, and the parser serializes every
+// IPv4 host that way, so the written host must equal the parsed one. Callers refuse user info
+// first (writtenUserinfo), so the host follows scheme:// directly.
 function ipv4HostKept(raw, url) {
   if (isIP(url.hostname) !== 4) {
     return true;
   }
   const stripped = stripUrlEdges(raw);
   const written = /^[a-z][a-z\d+.-]*:\/\/([^/?#:]+)/i.exec(stripped)?.[1];
-  return (
-    written === url.hostname && /^(?:0|[1-9]\d{0,2})(?:\.(?:0|[1-9]\d{0,2})){3}$/.test(url.hostname)
-  );
+  return written === url.hostname;
 }
 
 // KubernetesComputeDriver.validateCodexSeccompProfile. A localhost profile is a
