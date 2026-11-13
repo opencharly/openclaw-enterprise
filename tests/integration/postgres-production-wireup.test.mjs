@@ -116,7 +116,7 @@ async function productionDrivers({ includeDefaults = false, files, configuration
     bundledPresetVersions: runtime.bundledPresetVersions,
     computeDriver: createPassiveComputeDriver(),
     configurationDriver: configurationRoot
-      ? new FilesystemConfigurationDriver(configurationRoot)
+      ? new FilesystemConfigurationDriver({ root: configurationRoot })
       : createTestConfigurationDriver({ id: installation.drivers.configuration.id }),
     secretDriver: createTestSecretDriver({
       id: installation.drivers.secret.id,

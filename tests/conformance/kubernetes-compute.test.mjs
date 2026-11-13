@@ -78,7 +78,14 @@ const tenant = {
   createdAt: "2026-08-18T00:00:00.000Z",
 };
 
-const apiKeyAuth = {
+/**
+ * A harness-auth snapshot for an Agent whose model credential the platform holds as a Secret.
+ * It carries the login method and the Secret's identity only: `id` is a Kubernetes Secret
+ * resource identifier, which this Driver hashes solely to derive the Agent's ServiceAccount name
+ * (`kubernetes/index.ts`, `sha256Hex(required(auth.source.id, "ServiceAccount ID"), 32)`). No
+ * credential value appears here - the Compute Driver reads the Secret itself at delivery time.
+ */
+const harnessLoginAuth = {
   method: "api_key",
   source: {
     kind: "secret",
@@ -105,7 +112,7 @@ function authContext(revision, namespace = kubernetesNamespaceName(tenant.id)) {
   };
 }
 
-function preparedAuth(driver, namespace, embedded = false, harnessAuth = apiKeyAuth) {
+function preparedAuth(driver, namespace, embedded = false, harnessAuth = harnessLoginAuth) {
   const revision = {
     namespaceId: tenant.id,
     harness: embedded
@@ -443,7 +450,7 @@ function routedRevision(driver, overrides = {}) {
       },
     },
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
-    harnessAuth: apiKeyAuth,
+    harnessAuth: harnessLoginAuth,
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "service-principal-routed",
     createdAt: tenant.createdAt,
@@ -5587,7 +5594,7 @@ test("dedicated Codex projects the account-owned token through the common PAT lo
   const channels = driver.enabledChannels({
     configuration: { channels: { slack: {}, msteams: {} } },
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
-    harnessAuth: apiKeyAuth,
+    harnessAuth: harnessLoginAuth,
   });
 
   const gateway = driver.deployment(
@@ -6133,7 +6140,7 @@ test("direct service account token is confined to the model container and exact 
   const revision = {
     namespaceId: tenant.id,
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
-    harnessAuth: { ...apiKeyAuth, method: "codex_pat" },
+    harnessAuth: { ...harnessLoginAuth, method: "codex_pat" },
     configuration: { agents: { defaults: { model: "codex/discovered-model" } } },
   };
   driver.validateHarnessAuth(revision.harness, revision.harnessAuth, revision.configuration);
@@ -6333,13 +6340,13 @@ test("credential withdrawal revokes through the revision's exact Sandbox", async
 });
 
 test("OAuth Harness authentication requires Compute-owned dedicated Codex", () => {
-  const oauth = { ...apiKeyAuth, method: "oauth" };
+  const stagedLoginAuth = { ...harnessLoginAuth, method: "oauth" };
   const codex = { id: "codex", version: "1.0.0", mode: "dedicated" };
   const configuration = { agents: { defaults: { model: "codex/gpt-5" } } };
   const driver = new KubernetesComputeDriver(options());
   assert.equal(typeof driver.startHarnessDeviceAuthorization, "function");
   assert.equal(typeof driver.pollHarnessDeviceAuthorization, "function");
-  driver.validateHarnessAuth(codex, oauth, configuration);
+  driver.validateHarnessAuth(codex, stagedLoginAuth, configuration);
   // Unsupported topologies fail at admission, before a deployment stops predecessors.
   const sandboxDriver = {
     id: "sandbox-openshell",
@@ -6350,7 +6357,7 @@ test("OAuth Harness authentication requires Compute-owned dedicated Codex", () =
   const sandboxed = new KubernetesComputeDriver(options(), { sandboxDriver });
   // A Sandbox Driver is an Installation dependency: fixed text.
   assert.throws(
-    () => sandboxed.validateHarnessAuth(codex, oauth, configuration),
+    () => sandboxed.validateHarnessAuth(codex, stagedLoginAuth, configuration),
     /OAuth requires the Compute-owned dedicated Codex Harness/,
   );
   // Dedicated OpenClaw never takes OAuth: the Agent's setting is named, with or without one.
@@ -6359,7 +6366,7 @@ test("OAuth Harness authentication requires Compute-owned dedicated Codex", () =
       () =>
         compute.validateHarnessAuth(
           { id: "openclaw", version: "1.0.0", mode: "dedicated" },
-          oauth,
+          stagedLoginAuth,
           createHarnessConfiguration("openclaw", "gpt-4o-mini"),
           // Agent save: without a Sandbox Driver, deployment refuses dedicated OpenClaw first.
           null,
@@ -6404,7 +6411,7 @@ test("Harness authentication method admission names the Agent setting for its to
     ],
   ]) {
     for (const method of refused) {
-      const auth = method === "runtime" ? { method } : { ...apiKeyAuth, method };
+      const auth = method === "runtime" ? { method } : { ...harnessLoginAuth, method };
       // Agent save (null bindings) and deployment give the same named refusal.
       for (const bindings of [null, {}]) {
         if (harness === native && bindings !== null) {
@@ -6420,15 +6427,15 @@ test("Harness authentication method admission names the Agent setting for its to
     }
   }
   // The accepted methods pass this rule; api_key passes admission on every topology.
-  driver.validateHarnessAuth(embedded, apiKeyAuth, openclawConfiguration, null);
-  driver.validateHarnessAuth(native, apiKeyAuth, openclawConfiguration, null);
-  driver.validateHarnessAuth(codex, apiKeyAuth, codexConfiguration, null);
+  driver.validateHarnessAuth(embedded, harnessLoginAuth, openclawConfiguration, null);
+  driver.validateHarnessAuth(native, harnessLoginAuth, openclawConfiguration, null);
+  driver.validateHarnessAuth(codex, harnessLoginAuth, codexConfiguration, null);
 });
 
 test("dedicated Codex admission rejects settings its Gateway entrypoint cannot rewrite", () => {
   // The Gateway entrypoint refuses to start on these shapes; admitting them let
   // a deployment replace a working Gateway with one that crash-looped (D201).
-  const oauth = { ...apiKeyAuth, method: "oauth" };
+  const stagedLoginAuth = { ...harnessLoginAuth, method: "oauth" };
   const codex = { id: "codex", version: "1.0.0", mode: "dedicated" };
   const base = { agents: { defaults: { model: "codex/gpt-5" } } };
   const withCodexConfig = (config) => ({ ...base, plugins: { entries: { codex: { config } } } });
@@ -6459,7 +6466,7 @@ test("dedicated Codex admission rejects settings its Gateway entrypoint cannot r
       },
     },
   ]) {
-    driver.validateHarnessAuth(codex, oauth, accepted);
+    driver.validateHarnessAuth(codex, stagedLoginAuth, accepted);
   }
   for (const [rejected, message] of [
     [
@@ -6504,7 +6511,7 @@ test("dedicated Codex admission rejects settings its Gateway entrypoint cannot r
   ]) {
     // Admission returns this message to the Configuration owner (D321).
     assert.throws(
-      () => driver.validateHarnessAuth(codex, oauth, rejected),
+      () => driver.validateHarnessAuth(codex, stagedLoginAuth, rejected),
       (error) =>
         error instanceof ConfigurationHarnessError &&
         error.message ===
@@ -6524,7 +6531,7 @@ test("dedicated Codex admission rejects settings its Gateway entrypoint cannot r
     ],
   ]) {
     assert.throws(
-      () => driver.validateHarnessAuth(codex, oauth, { ...base, models: { providers } }),
+      () => driver.validateHarnessAuth(codex, stagedLoginAuth, { ...base, models: { providers } }),
       (error) => {
         assert.ok(error instanceof ConfigurationHarnessError);
         assert.equal(Array.from(error.message).length, 256, error.message);
@@ -6539,7 +6546,7 @@ test("dedicated Codex admission rejects settings its Gateway entrypoint cannot r
   const padded = `${" ".repeat(room - 6)}OpenAI`;
   assert.throws(
     () =>
-      driver.validateHarnessAuth(codex, oauth, {
+      driver.validateHarnessAuth(codex, stagedLoginAuth, {
         ...base,
         models: { providers: { [padded]: "stub" } },
       }),
@@ -6547,7 +6554,7 @@ test("dedicated Codex admission rejects settings its Gateway entrypoint cannot r
   );
   assert.throws(
     () =>
-      driver.validateHarnessAuth(codex, oauth, {
+      driver.validateHarnessAuth(codex, stagedLoginAuth, {
         ...base,
         models: { providers: { [` ${padded}`]: "stub" } },
       }),
@@ -6604,7 +6611,7 @@ test("deployment admission refuses Gateway breakers before a dedicated deploymen
   ]) {
     for (const harness of [codex, provisioning]) {
       assert.throws(
-        () => routed.validateHarnessAuth(harness, apiKeyAuth, { ...base, plugins }),
+        () => routed.validateHarnessAuth(harness, harnessLoginAuth, { ...base, plugins }),
         named(setting, requirement),
       );
     }
@@ -6612,18 +6619,18 @@ test("deployment admission refuses Gateway breakers before a dedicated deploymen
       () =>
         routedNative.validateHarnessAuth(
           { id: "openclaw", version: "1.0.0", mode: "dedicated" },
-          apiKeyAuth,
+          harnessLoginAuth,
           { ...createHarnessConfiguration("openclaw", "gpt-4o-mini"), plugins },
         ),
       named(setting, requirement),
     );
     // A Gateway without a workspace node does not need the plugin.
     for (const driver of withoutNode) {
-      driver.validateHarnessAuth(codex, apiKeyAuth, { ...base, plugins });
+      driver.validateHarnessAuth(codex, harnessLoginAuth, { ...base, plugins });
     }
-    routed.validateHarnessAuth(embedded, apiKeyAuth, { ...embeddedBase, plugins });
+    routed.validateHarnessAuth(embedded, harnessLoginAuth, { ...embeddedBase, plugins });
   }
-  routed.validateHarnessAuth(codex, apiKeyAuth, {
+  routed.validateHarnessAuth(codex, harnessLoginAuth, {
     ...base,
     plugins: { deny: ["other"], entries: { "file-transfer": { enabled: true } } },
   });
@@ -6684,7 +6691,7 @@ test("deployment admission refuses Gateway breakers before a dedicated deploymen
   // f1115: enabled channels need a dedicated workload and the Installation's channel runtime.
   const slack = { channels: { slack: { enabled: true } } };
   assert.throws(
-    () => unrouted.validateHarnessAuth(codex, apiKeyAuth, { ...base, ...slack }),
+    () => unrouted.validateHarnessAuth(codex, harnessLoginAuth, { ...base, ...slack }),
     named(
       "channels.slack",
       "is enabled, but this Installation has no channel runtime: enabled channels require isolated credentials and a reviewed proxy",
@@ -6694,21 +6701,23 @@ test("deployment admission refuses Gateway breakers before a dedicated deploymen
     options({ runtime: { ...runtime, channels: { proxyUrl: "http://10.42.0.15:3128" } } }),
   );
   assert.throws(
-    () => withChannels.validateHarnessAuth(embedded, apiKeyAuth, { ...embeddedBase, ...slack }),
+    () =>
+      withChannels.validateHarnessAuth(embedded, harnessLoginAuth, { ...embeddedBase, ...slack }),
     named("channels.slack", "is enabled, but channels require a dedicated Agent workload"),
   );
-  withChannels.validateHarnessAuth(codex, apiKeyAuth, { ...base, ...slack });
+  withChannels.validateHarnessAuth(codex, harnessLoginAuth, { ...base, ...slack });
   // Agent save (null bindings) leaves the Installation's channel runtime to deployment, and
   // still refuses channels on an embedded Agent, which the Agent's own mode decides.
-  unrouted.validateHarnessAuth(codex, apiKeyAuth, { ...base, ...slack }, null);
+  unrouted.validateHarnessAuth(codex, harnessLoginAuth, { ...base, ...slack }, null);
   assert.throws(
-    () => unrouted.validateHarnessAuth(embedded, apiKeyAuth, { ...embeddedBase, ...slack }, null),
+    () =>
+      unrouted.validateHarnessAuth(embedded, harnessLoginAuth, { ...embeddedBase, ...slack }, null),
     named("channels.slack", "is enabled, but channels require a dedicated Agent workload"),
   );
   // A disabled channel, and channel defaults, need neither.
   for (const channels of [{ slack: { enabled: false } }, { defaults: { groupPolicy: "open" } }]) {
-    unrouted.validateHarnessAuth(codex, apiKeyAuth, { ...base, channels });
-    unrouted.validateHarnessAuth(embedded, apiKeyAuth, { ...embeddedBase, channels });
+    unrouted.validateHarnessAuth(codex, harnessLoginAuth, { ...base, channels });
+    unrouted.validateHarnessAuth(embedded, harnessLoginAuth, { ...embeddedBase, channels });
   }
 });
 
@@ -6942,7 +6951,7 @@ test("dedicated OpenClaw gateway receives Agent plugin approvers without plugin 
     configurationGeneration: 1,
     configuration: createHarnessConfiguration("openclaw", "gpt-5"),
     harness: { id: "openclaw", version: "1.0.0", mode: "dedicated" },
-    harnessAuth: apiKeyAuth,
+    harnessAuth: harnessLoginAuth,
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "service-principal-native-approvers",
     createdAt: tenant.createdAt,
@@ -7011,7 +7020,7 @@ test("dedicated OpenClaw renders an enrolled Harness without exposing model cred
     configurationGeneration: 1,
     configuration,
     harness: { id: "openclaw", version: "1.0.0", mode: "dedicated" },
-    harnessAuth: apiKeyAuth,
+    harnessAuth: harnessLoginAuth,
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "service-principal-native-worker",
     createdAt: tenant.createdAt,
@@ -7271,14 +7280,18 @@ test("dedicated OpenClaw renders an enrolled Harness without exposing model cred
       [{ ...configure({}), agents: [] }, "The OpenClaw Gateway requires agents to be an object."],
     ]) {
       assert.throws(
-        () => driver.validateHarnessAuth(harness, apiKeyAuth, configuration),
+        () => driver.validateHarnessAuth(harness, harnessLoginAuth, configuration),
         (error) => error instanceof ConfigurationHarnessError && error.message === message,
         `${harness.mode} ${harness.id} ${JSON.stringify(configuration.agents)}`,
       );
     }
     assert.throws(
       () =>
-        driver.validateHarnessAuth(harness, apiKeyAuth, configure({ entries: { [longKey]: {} } })),
+        driver.validateHarnessAuth(
+          harness,
+          harnessLoginAuth,
+          configure({ entries: { [longKey]: {} } }),
+        ),
       (error) =>
         error instanceof ConfigurationHarnessError &&
         Array.from(error.message).length === 256 &&
@@ -7302,7 +7315,7 @@ test("dedicated OpenClaw renders an enrolled Harness without exposing model cred
     { ownership: "explicit", entries: { x: {}, "x-": {}, _x: {}, "_-x": {} } },
   ]) {
     assert.doesNotThrow(
-      () => driver.validateHarnessAuth(embeddedHarness, apiKeyAuth, withAgents(agents)),
+      () => driver.validateHarnessAuth(embeddedHarness, harnessLoginAuth, withAgents(agents)),
       JSON.stringify(agents),
     );
   }
@@ -7539,7 +7552,7 @@ test("account-token authentication grants only the exact Codex revision outbound
     agentId: "agent-account-token",
     servicePrincipalId: "service-principal-account-token",
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
-    harnessAuth: apiKeyAuth,
+    harnessAuth: harnessLoginAuth,
   };
   const namespace = kubernetesNamespaceName(tenant.id);
   const digest = (value, length = 32) =>
@@ -7600,7 +7613,7 @@ test("native channel providers require Secret bindings and project them only to 
     configurationKind: "agent",
     configurationGeneration: 1,
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
-    harnessAuth: apiKeyAuth,
+    harnessAuth: harnessLoginAuth,
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "service-principal-agent-a",
     createdAt: tenant.createdAt,
@@ -8717,7 +8730,7 @@ async function exerciseEmbeddedReplacement({ providerId, model, environmentName,
     configurationKind: "agent",
     configurationGeneration: 1,
     harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
-    harnessAuth: apiKeyAuth,
+    harnessAuth: harnessLoginAuth,
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "service-principal-embedded-recovery",
     createdAt: tenant.createdAt,
@@ -9237,7 +9250,7 @@ test("Anthropic API-key admission binds every embedded model to the canonical cr
     { source: "env", provider: "default", id: "ANTHROPIC_API_KEY" },
   ]) {
     assert.doesNotThrow(() =>
-      driver.validateHarnessAuth(embedded, apiKeyAuth, {
+      driver.validateHarnessAuth(embedded, harnessLoginAuth, {
         ...configuration,
         models: { providers: { anthropic: { apiKey } } },
       }),
@@ -9246,7 +9259,7 @@ test("Anthropic API-key admission binds every embedded model to the canonical cr
   // With secrets.defaults.env naming another alias, "default" is an unconfigured provider.
   assert.throws(
     () =>
-      driver.validateHarnessAuth(embedded, apiKeyAuth, {
+      driver.validateHarnessAuth(embedded, harnessLoginAuth, {
         ...configuration,
         secrets: { ...configuration.secrets, defaults: { env: "model" } },
         models: {
@@ -9270,7 +9283,7 @@ test("Anthropic API-key admission binds every embedded model to the canonical cr
     // The caller owns the Configuration, so admission names the setting (finding 1116).
     assert.throws(
       () =>
-        driver.validateHarnessAuth(embedded, apiKeyAuth, {
+        driver.validateHarnessAuth(embedded, harnessLoginAuth, {
           ...configuration,
           models: { providers: { anthropic: { apiKey } } },
         }),
@@ -9316,7 +9329,11 @@ test("Anthropic API-key admission binds every embedded model to the canonical cr
   ]) {
     // Every topology refuses these, so Configuration save runs the same rule.
     for (const check of [
-      () => driver.validateHarnessAuth(embedded, apiKeyAuth, { ...configuration, ...conflicting }),
+      () =>
+        driver.validateHarnessAuth(embedded, harnessLoginAuth, {
+          ...configuration,
+          ...conflicting,
+        }),
       () => driver.validateConfiguration({ ...configuration, ...conflicting }),
     ]) {
       assert.throws(check, { name: "ConfigurationHarnessError", message });
@@ -9337,7 +9354,7 @@ test("Anthropic API-key admission binds every embedded model to the canonical cr
   ]) {
     assert.throws(
       () =>
-        driver.validateHarnessAuth(embedded, apiKeyAuth, {
+        driver.validateHarnessAuth(embedded, harnessLoginAuth, {
           agents: { defaults: { model: selection } },
         }),
       typeof refusal === "string"
@@ -9349,7 +9366,7 @@ test("Anthropic API-key admission binds every embedded model to the canonical cr
     () =>
       driver.validateHarnessAuth(
         { id: "codex", version: "1.0.0", mode: "dedicated" },
-        apiKeyAuth,
+        harnessLoginAuth,
         configuration,
       ),
     /compatible model provider/i,
@@ -9444,8 +9461,8 @@ test("every model selection uses the Harness binding's provider (finding 1291)",
   });
   // Agent save (null bindings) and deployment admission.
   const admissions = (harness, configuration) => [
-    () => driver.validateHarnessAuth(harness, apiKeyAuth, configuration, null),
-    () => driver.validateHarnessAuth(harness, apiKeyAuth, configuration),
+    () => driver.validateHarnessAuth(harness, harnessLoginAuth, configuration, null),
+    () => driver.validateHarnessAuth(harness, harnessLoginAuth, configuration),
   ];
   const refuses = (harness, configuration, expected, label) => {
     for (const admit of admissions(harness, configuration)) {
@@ -9832,8 +9849,8 @@ test("model provider credential headers and request auth are refused on every pr
       const configuration = { ...selected, ...values };
       for (const check of [
         () => driver.validateConfiguration(configuration),
-        () => driver.validateHarnessAuth(harness, apiKeyAuth, configuration, null),
-        () => driver.validateHarnessAuth(harness, apiKeyAuth, configuration),
+        () => driver.validateHarnessAuth(harness, harnessLoginAuth, configuration, null),
+        () => driver.validateHarnessAuth(harness, harnessLoginAuth, configuration),
       ]) {
         assert.throws(check, { name: "ConfigurationHarnessError", message }, label);
       }
@@ -10058,7 +10075,7 @@ test("embedded startup probes its selected provider and allows graceful Gateway 
         const candidate = {
           namespaceId: tenant.id,
           harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
-          harnessAuth: apiKeyAuth,
+          harnessAuth: harnessLoginAuth,
           configuration: { agents: { defaults: { model: `${provider}/${model}` } } },
         };
         const prepared = driver.harnessAuthForRevision(candidate, authContext(candidate), {
@@ -10528,7 +10545,7 @@ test("Kubernetes lifecycle hooks never run before cluster ownership and workload
       diagnostics: { otel: { logs: false } },
     },
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
-    harnessAuth: apiKeyAuth,
+    harnessAuth: harnessLoginAuth,
     compute: { id: "another-driver", implementation: "another-implementation" },
     servicePrincipalId: "service-principal-agent-foreign",
     createdAt: tenant.createdAt,
@@ -12314,7 +12331,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
       diagnostics: { otel: { logs: false } },
     },
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
-    harnessAuth: apiKeyAuth,
+    harnessAuth: harnessLoginAuth,
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "service-principal-agent-a",
     createdAt: tenant.createdAt,
@@ -12393,7 +12410,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
   assert.doesNotThrow(() =>
     production.validateHarnessAuth(
       { id: "openclaw", version: "1.0.0", mode: "dedicated" },
-      apiKeyAuth,
+      harnessLoginAuth,
       dedicatedNativeConfiguration,
     ),
   );
@@ -12401,7 +12418,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
     () =>
       production.validateHarnessAuth(
         { id: "openclaw", version: "1.0.0", mode: "dedicated" },
-        apiKeyAuth,
+        harnessLoginAuth,
         {
           ...dedicatedNativeConfiguration,
           models: {
@@ -12424,7 +12441,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
     () =>
       production.validateHarnessAuth(
         { id: "openclaw", version: "1.0.0", mode: "dedicated" },
-        apiKeyAuth,
+        harnessLoginAuth,
         {
           ...dedicatedNativeConfiguration,
           models: {
@@ -12498,7 +12515,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
       () =>
         production.validateHarnessAuth(
           { id: "openclaw", version: "1.0.0", mode: "dedicated" },
-          apiKeyAuth,
+          harnessLoginAuth,
           configuration,
         ),
       {
@@ -12584,14 +12601,14 @@ test("revision lifecycle rejects another driver or missing identity before clust
     ...revision,
     compute: { id: production.id, implementation: production.implementation },
     harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
-    harnessAuth: apiKeyAuth,
+    harnessAuth: harnessLoginAuth,
     configuration: { ...revision.configuration, agents: { defaults: { model: "openai/gpt-5" } } },
   };
   // Admission must retain supported model choices without permitting a second credential selector.
   for (const model of ["codex/gpt-5", "openai/gpt-5"]) {
     const configuration = { agents: { defaults: { model } } };
     assert.doesNotThrow(() =>
-      production.validateHarnessAuth(revision.harness, apiKeyAuth, configuration),
+      production.validateHarnessAuth(revision.harness, harnessLoginAuth, configuration),
     );
     assert.equal(configuration.agents.defaults.model, model);
   }
@@ -12617,7 +12634,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
     { source: "env", provider: "model", id: "OPENAI_API_KEY" },
   ]) {
     assert.doesNotThrow(() =>
-      production.validateHarnessAuth(embeddedRevision.harness, apiKeyAuth, {
+      production.validateHarnessAuth(embeddedRevision.harness, harnessLoginAuth, {
         ...embeddedRevision.configuration,
         secrets: { providers: { model: { source: "env", allowlist: ["OPENAI_API_KEY"] } } },
         models: { providers: { openai: { apiKey } } },
@@ -13532,7 +13549,7 @@ test("stopping a Kubernetes revision and retiring its predecessor retains Agent 
     revision: 2,
     agentId,
     harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
-    harnessAuth: apiKeyAuth,
+    harnessAuth: harnessLoginAuth,
   });
   const namespaceResource = {
     apiVersion: "v1",
@@ -16478,7 +16495,7 @@ test("Kubernetes OAuth reobserves an API-defaulted Job without changing its gene
 });
 
 function stageReadyOAuthSource(objects, revision, context) {
-  revision.harnessAuth = { ...apiKeyAuth, method: "oauth" };
+  revision.harnessAuth = { ...harnessLoginAuth, method: "oauth" };
   context.harnessAuth = authContext(
     revision,
     context.harnessAuth.backendRef.namespaceName,
@@ -16487,8 +16504,8 @@ function stageReadyOAuthSource(objects, revision, context) {
   const source = objects.get(sourceKey);
   source.metadata.annotations = {
     "openclaw.dev/namespace-id": tenant.id,
-    "openclaw.dev/secret-id": apiKeyAuth.source.id,
-    "openclaw.dev/secret-driver-id": apiKeyAuth.secretDriverId,
+    "openclaw.dev/secret-id": harnessLoginAuth.source.id,
+    "openclaw.dev/secret-driver-id": harnessLoginAuth.secretDriverId,
   };
   source.data.value = Buffer.from(
     JSON.stringify({

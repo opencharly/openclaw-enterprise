@@ -6,6 +6,8 @@
 # Dependency trees and generated artifacts remain machine-local at every depth.
 node_modules/
 /bin/occ
+/bin/compute-containerd
+/bin/openshell-driver-containerd
 target/
 dist/
 .build/

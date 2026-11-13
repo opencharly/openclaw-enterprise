@@ -1509,7 +1509,7 @@ for (const [method, action] of [
 test("Filesystem Configuration API rejects plaintext model writes without changing stored references", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "occ-model-configuration-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
+  const configurationDriver = new FilesystemConfigurationDriver({ root });
   const { namespace, collection, ...context } = await fixture({ configurationDriver });
   const sentinel = `synthetic-configuration-credential-${randomUUID()}`;
   const unsafe = { models: { providers: { openai: { apiKey: sentinel } } } };
@@ -1602,7 +1602,7 @@ test("Without Kubernetes Compute, Configuration and Preset saves refuse what eve
   // names (version, dot and new words) took literals.
   const root = await mkdtemp(join(tmpdir(), "occ-model-rules-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
+  const configurationDriver = new FilesystemConfigurationDriver({ root });
   // Like Docker Compute: ready Namespaces, no validateConfiguration.
   const computeDriver = createReadyComputeDriver("compute-without-configuration-rules");
   const { namespace, ...context } = await fixture({ configurationDriver, computeDriver });
@@ -2037,7 +2037,7 @@ test("Configuration and Preset saves refuse a user name or password in proxy, ch
   // carry the same credential (a proxy sends it as Proxy-Authorization), and saved.
   const root = await mkdtemp(join(tmpdir(), "occ-url-userinfo-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
+  const configurationDriver = new FilesystemConfigurationDriver({ root });
   const computeDriver = createReadyComputeDriver("compute-url-userinfo");
   const { namespace, ...context } = await fixture({ configurationDriver, computeDriver });
   await context.controller.transact((state) =>
@@ -2352,7 +2352,7 @@ test("Configuration and Preset saves refuse a user name or password in a URL in 
   // the userinfo in `PIP_INDEX_URL`, `npm_config_registry` or `GOPROXY` as Basic auth.
   const root = await mkdtemp(join(tmpdir(), "occ-env-url-userinfo-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
+  const configurationDriver = new FilesystemConfigurationDriver({ root });
   const computeDriver = createReadyComputeDriver("compute-env-url-userinfo");
   const { namespace, ...context } = await fixture({ configurationDriver, computeDriver });
   await context.controller.transact((state) =>
@@ -2682,7 +2682,7 @@ test("Configuration and Preset saves check a URL of many ${NAME:-fallback} refer
   // Every URL field now spends the document's work budget, which refuses such a value at once.
   const root = await mkdtemp(join(tmpdir(), "occ-url-userinfo-cost-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
+  const configurationDriver = new FilesystemConfigurationDriver({ root });
   const computeDriver = createReadyComputeDriver("compute-url-userinfo-cost");
   const { namespace, ...context } = await fixture({ configurationDriver, computeDriver });
   await context.controller.transact((state) =>
@@ -2829,7 +2829,7 @@ test("Configuration and Preset saves read a git config value as a proxy when its
   // scheme-less proxy read keyed on the variable name only, so `u:pw@proxy:3128` saved.
   const root = await mkdtemp(join(tmpdir(), "occ-git-proxy-userinfo-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
+  const configurationDriver = new FilesystemConfigurationDriver({ root });
   const computeDriver = createReadyComputeDriver("compute-git-proxy-userinfo");
   const { namespace, ...context } = await fixture({ configurationDriver, computeDriver });
   await context.controller.transact((state) =>
@@ -3137,7 +3137,7 @@ test("Configuration and Preset saves refuse a literal credential in an MCP serve
   // headers already had to hold references, but an MCP server saved a literal `Authorization`.
   const root = await mkdtemp(join(tmpdir(), "occ-mcp-header-credential-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
+  const configurationDriver = new FilesystemConfigurationDriver({ root });
   const computeDriver = createReadyComputeDriver("compute-mcp-header-credential");
   const { namespace, ...context } = await fixture({ configurationDriver, computeDriver });
   await context.controller.transact((state) =>
@@ -3243,7 +3243,7 @@ test("Preset and Configuration saves refuse a baseUrl or api that a variable fil
   // the whole baseUrl or api saved, and failed every launch.
   const root = await mkdtemp(join(tmpdir(), "occ-preset-fill-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
+  const configurationDriver = new FilesystemConfigurationDriver({ root });
   const computeDriver = createReadyComputeDriver("compute-preset-fill");
   const { namespace, ...context } = await fixture({ configurationDriver, computeDriver });
   await context.controller.transact((state) =>
@@ -3382,7 +3382,7 @@ test("A stored Configuration with request credentials an older release accepted 
   // Kubernetes Compute rule's message, before any revision or runtime resource exists.
   const root = await mkdtemp(join(tmpdir(), "occ-upgrade-configuration-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
+  const configurationDriver = new FilesystemConfigurationDriver({ root });
   const { namespace, ...context } = await fixture({
     configurationDriver,
     computeDriver: kubernetesRules("compute-upgrade-repair", ...configurationRules),

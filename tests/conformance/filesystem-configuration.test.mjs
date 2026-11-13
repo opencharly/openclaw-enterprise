@@ -9,7 +9,7 @@ import { FilesystemConfigurationDriver } from "../../apps/controller/src/drivers
 test("Filesystem Configuration cleans its temporary file after a failed rename and can retry", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "occ-configuration-write-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const driver = new FilesystemConfigurationDriver(root);
+  const driver = new FilesystemConfigurationDriver({ root });
   const configuration = {
     id: `cfg_${randomUUID()}`,
     namespaceId: `ns_${randomUUID()}`,
