@@ -4,259 +4,323 @@ OpenClaw Enterprise (OCE) is pre-alpha and has no stable release, so a newer
 main can refuse or break an Installation that an older build created. Each
 change like that gets an entry here: what breaks, who is affected, how to tell,
 and the steps. Before an upgrade, read every entry dated after the source commit
-you run now, then follow the [upgrade checklist](upgrade-checklist.md) and
+you run now, here, in the [earlier notices](breaking-changes-archive.md), in the
+[notices before 2026-10-11](breaking-changes-before-2026-10-11.md) and in the
+[notices before 2026-10-10](breaking-changes-before-2026-10-10.md),
+then follow the [upgrade checklist](upgrade-checklist.md) and
 [production image upgrades](production-upgrade.md).
 
 Entries are newest first. Steps marked _untested_ have not been run against a
 real Installation.
 
-## 2026-10-09: released Gateways need an agent database migration
+## 2026-10-14: every model selection must use the Harness provider
 
-**What breaks.** Gateways deployed by the 2026-09-28 release keep their chat
-state in an OpenClaw agent database at schema 23. Runtimes since #587
-(2026-09-29) use schema 24, and OpenClaw refuses the older database until
-`openclaw doctor --fix` migrates it. Deployed again on such a runtime, the
-Gateway exits and restarts into the same refusal. Since #1986 the Gateway runs
-that migration itself before OpenClaw starts; see
-[Gateway storage](../../reference/drivers/kubernetes-compute/storage-and-credentials.md#gateway-storage).
+**What breaks.** On Kubernetes Compute, Configuration save, Agent save and
+deployment refuse a model selection off the primary model's provider:
+fallbacks, Agent entries, `subagents.model`, `imageModel`, `pdfModel` and the
+other `*Model` settings, `models` policy keys, hook models and
+`channels.modelByChannel`, and an `apiKey` on another `models.providers` entry.
+Dedicated Codex refuses every `apiKey` and a `models` policy key without a
+provider. Every Compute refuses a fallback on another provider at save.
 
-**Who is affected.** Installations upgraded from the 2026-09-28 release whose
-Agents are deployed again by a controller before #1986. Gateways without chat
-state are not affected.
+**Who is affected.** Configurations that select a second provider or give it
+an `apiKey`, or that set any provider `apiKey` for Dedicated Codex.
 
-**How to tell.** The Gateway log shows
-`uses schema version 23; stop active agents and run openclaw doctor --fix`.
+**How to tell.** A `400` names the setting: `... must select
+<provider>/<model>, the provider of the Agent's Harness authentication
+binding`, `... must use the primary model's provider`, `... must be
+provider/model references`, or `models.providers.<name>.apiKey must be unset`.
 
-**Steps.** Upgrade the controller to #1986 or later, then deploy the Agent
-again (`occ agent deploy <id>`). With an older controller, scale the Gateway
-Deployment to zero, run
-`OPENCLAW_CONFIG_READONLY=1 openclaw doctor --fix --non-interactive` once in a
-Pod with the Gateway's template and `sleep` as its command, delete that Pod,
-and scale the Deployment back. Doctor logs `v23 -> v24`. Without
-`OPENCLAW_CONFIG_READONLY=1` it may end with a read-only file system error and
-exit code `1`; the migration still applies.
+**Steps.** Select only the primary model's provider and remove the other
+provider's `apiKey`, then save and deploy again.
 
-## 2026-10-09: Dedicated Codex deployment requires the main Agent
+## 2026-10-14: observability URLs must not hide another host
 
-**What breaks.** Since #1972, Kubernetes Compute applies dedicated OpenClaw's
-`main` Agent rules to dedicated Codex. Deployment answers `400` naming the
-setting when the Configuration has:
+**What breaks.** Profile preflight and API and worker startup refuse an
+`observability.url` that contains a tab, newline, or a backslash before the
+query. The parser stored a different host. A backslash in the query stays.
 
-- `agents.entries` without a `main` entry, for example
-  `Dedicated Codex serves the main Agent: add agents.entries.main, or rename an entry to main.`
-- `agents.defaults.sessionStore.agentId` or `agents.defaults.systemAgent.agentId`
-  set to another Agent.
-- an `agents.entries` key that is not canonical, such as `_helper`.
+**Who is affected.** Profiles with `controlPlane.observabilityUrl`, and
+Installations whose startup `observability.url` uses one of those characters.
 
-The Gateway serves the Harness workspace only to `main`. Without a `main` entry,
-workspace file reads and writes answered `503`; with another default Agent,
-chats ran as an Agent other than the one the files page edits.
+**How to tell.** Preflight reports `controlPlane.observabilityUrl must not
+contain a tab or newline, or a backslash before the query`. Startup logs
+`OBSERVABILITY_URL_INVALID`.
 
-**Who is affected.** Dedicated Codex Agents whose Configuration matches one of
-these. No bundled Preset does. Running workloads are not changed, but until the
-Agent is deployed again with a fixed Configuration, re-preparing its active
-revision reports the same refusal and skips repair. Embedded OpenClaw and SSH
-Compute are unchanged.
+**Steps.** Write the host you mean, with no tab, newline, or backslash before the
+query, and upgrade. _untested_ against a live Installation.
 
-**How to tell.** Check the Agent's Configuration for the settings above.
+## 2026-10-14: OpenShell gateway IPv4 hosts must be four decimal octets
 
-**Steps.** Rename the entry to `main` (or add `agents.entries.main`), set or
-remove the named `agentId`, rename a non-canonical key, save the Configuration,
-and deploy the Agent again. _untested_
+**What breaks.** Startup and both gateway clients refuse an OpenShell
+`endpoint` whose IPv4 host is not four decimal octets with no leading zeros.
 
-## 2026-10-09: Configuration save refuses Agent rosters every deployment refuses
+**Who is affected.** Backends whose `configuration.endpoint` uses one of those
+spellings.
 
-**What breaks.** Since #1959, Configuration create and update
-(`POST /namespaces/<id>/configurations`, `PATCH .../configurations/<id>`,
-`occ configuration create` and `update`) answer `400 INVALID_REQUEST` for an
-`agents` roster that Kubernetes Compute deployment already refused on every
-topology, such as an `agents.list`, an entry's `default`, or more than one
-`agents.entries` entry without `agents.ownership: "explicit"`. The
-[Configuration reference](../../reference/configuration.md#create-read-update-and-delete)
-lists every rule. The message is the one deployment gives, naming the setting and
-the rule. Such a write used to save and fail only at deploy.
+**How to tell.** The report says `IPv4 host must be four decimal octets`.
 
-**Who is affected.** Clients and scripts that save such a roster, including the
-split-layout `import` below, which re-creates each exported Configuration.
-Stored Configurations do not change: they still read, Kubernetes deployment still
-refuses them with the same message, and an update that fixes the roster saves.
-SSH Compute deployment does not check rosters, so there the save is the first
-refusal. Rules that depend on the topology, such as dedicated OpenClaw serving
-the `main` Agent, still apply only at deployment.
+**Steps.** Write those four octets, then restart.
 
-**How to tell.** On Kubernetes Compute, deploying an Agent that uses such a
-Configuration already fails with a `400` naming an `agents` setting. A save now
-fails with the same message.
+## 2026-10-14: model endpoint URLs refuse rewritten spellings and IP hosts
 
-**Steps.** Fix the roster as the message says and save again. For a split-layout
-bundle, fix that Configuration's `values` in the bundle file and run `import`
-again; it resumes from its ID map.
+**What breaks.** Creating an OpenShell `openai` credential source refuses a
+`base_url`, and Kubernetes Compute startup refuses `runtime.codexModelBaseUrl`,
+with a space or control character, without the `//` after `https:`, or with an
+`@` before the host (`https://@host/v1`), which the URL parser silently
+rewrote. An `openai` source host must be an exact DNS name, like a
+`bearer-token` host: an IP address in any spelling (`127.0.0.1`,
+`0x7f000001`, `127.1`) or a label with `_` or an edge `-` is refused. A
+deployment or Secret update of an existing source with such a host or spelling
+fails. A new source stores its
+`base_url` normalized (`https://API.example.com:443/v1/` as
+`https://api.example.com/v1`).
 
-## 2026-10-09: Driver package entries are checked as Node resolves them
+**Who is affected.** Sources or Compute settings that use those spellings, and
+`openai` sources with such a host.
 
-**What breaks.** Since #1923 and #1944, the controller picks an external Driver
-package's root export, and decides whether the entry is ESM, the way Node's
-`import()` does. It refuses to start, with a `drivers.<capability>.package`
-message, on shapes the older loader accepted:
+**How to tell.** Creation returns `400` for `/config/base_url`, with `... host
+must be an exact DNS name.` or the spelling's message. Compute startup reports
+`Codex model endpoint must ...` or `... requires HTTPS ...`. A deployment with
+such a source fails with `The OpenShell endpoint requires HTTPS, ...`.
 
-- A `.js` entry whose nearest `package.json` lacks `"type": "module"`, even when
-  the package root has it, such as `dist/index.js` beside a `dist/package.json`
-  without `type`. Node can still import that file by detecting ESM syntax; the
-  controller does not. Its refusal now names the `package.json` that decided the
-  format.
-- A nested `package.json` that is not valid JSON or not an object
-  (`has invalid package scope metadata`); the older loader ignored it.
-- An export target that is extensionless (`./dist/index`), a directory, or has
-  an encoded `/` or `\`; a file name with a literal `%`, which is now
-  percent-decoded; and mixed subpath and condition keys, or numeric condition
-  keys.
+**Steps.** Fix the spelling. Replace such a source with one whose endpoint is a
+DNS name its certificate covers, as the
+[`openai` source replacement notice](breaking-changes-archive.md#2026-10-13-openshell-openai-credential-sources-need-replacing)
+describes. _untested_ against a live Installation.
 
-Some shapes load a different file instead of refusing: a `"."` nested inside an
-array entry or condition no longer selects a file, so a later entry may load, and
-the `module-sync` and `node-addons` conditions now match as in Node.
+## 2026-10-13: image repository paths must be lowercase; no @ before URL hosts
 
-**Who is affected.** Installations that select a Driver package
-(`drivers.<capability>.package`) built with one of these shapes. Built-in
-Drivers and the [documented manifest](../../reference/drivers/selection.md) are
-not affected.
+**What breaks.** Profile preflight refuses an uppercase letter in the repository
+path of `controlPlane.controllerImage`, `runtime.image` or `repository.image`,
+which Kubernetes refused to pull; an uppercase registry host or tag still
+passes. The chart (`images.*`, `repositoryCredentials.image`,
+`logging.collector.image`),
+`prepare-bootstrap-volume`, `upgrade-production-images`, and API and worker
+startup for the Compute gateway and Agent images refuse it too, and any other
+reference Kubernetes cannot parse (`..` or an empty path component, a tag over
+128 characters, non-ASCII letters); all of them accept an IPv6 registry host
+(`[fd00::1]:5000/...`). Preflight, the chart, API
+startup and the bootstrap Job also refuse any `@` before the `auth.baseUrl`
+host (`https://@host`), which Node silently dropped; preflight refuses it in
+`controlPlane.observabilityUrl`, and API and worker startup in
+`observability.url`.
 
-**How to tell.** The controller exits at startup with a
-`drivers.<capability>.package` message naming the problem. For a package that
-uses nested `"."` keys or those conditions, check which compiled file its root
-export now selects.
+**Who is affected.** Profiles, values, tool flags or Installation YAML that use
+those spellings.
 
-**Steps.** Fix the package and publish a new version: add `"type": "module"` to
-the `package.json` the message names, or rename the entry to `.mjs`, and point
-`exports` at the exact compiled file. Pin that version in the controller image's
-dependencies, rebuild the image and upgrade.
+**How to tell.** Preflight, the chart and the tools report `... repository path
+must be lowercase`, the field's image reference message, or the URL field's
+absolute-URL message. API startup logs
+`AUTH_BASE_URL_INVALID`; API and worker startup log `RUNTIME_IMAGE_INVALID` for
+any refused Gateway or Agent image, or `OBSERVABILITY_URL_INVALID`.
 
-## 2026-10-09: peer namespaces must be Kubernetes namespace names
+**Steps.** Fix the image reference (lowercase its repository path, drop what
+Kubernetes cannot parse), or delete the `@`, then render or restart again.
 
-**What breaks.** Since #1914, the controller refuses to start with
-`DNS peer namespace must be a Kubernetes namespace name: a DNS label of at most
-63 characters.` (or the same message for a gateway client, the repository
-credential gateway, the provider Harness gateway or the managed channel proxy)
-when that peer's namespace is not a DNS label (lowercase letters, digits and
-inner hyphens, at most 63 characters). The observability demo chart refuses such
-an `occ.namespace`, `dns.namespace` or `grafana.clients[N].namespace`.
+## 2026-10-13: channel proxy hosts must name one proxy address
 
-**Who is affected.** Only a hand-written `installation.yaml` or demo chart
-values with such a value. No Namespace can have that name, so the peer's
-NetworkPolicy matched nothing or could not be applied: the peer was already
-unreachable. The profile renderer and product charts refuse these values
-already.
+**What breaks.** Startup refuses a channel proxy IPv4 host that is not four
+decimal octets from 0 to 255 with no leading zeros. Shorthand, a single
+integer, hex, and leading zeros used to allow egress to a different address.
+Startup also refuses an unspecified host (`0.0.0.0`, `[::]`), which names no
+destination, and an IPv4-mapped IPv6 host (`[::ffff:10.42.0.15]`), whose egress
+never reached the proxy. Profile preflight refuses `0.0.0.0` in
+`channels.runtimeProxyUrl`. Preflight, the chart and API startup also refuse it in the
+Slack directory proxy (`channels.directoryProxyUrl`, `api.channelDirectoryProxyUrl`) with
+`... must not use host 0.0.0.0, which names no proxy address`.
 
-**How to tell.** The controller logs the message above at startup; `helm
-upgrade` of the demo chart fails with the field name.
+**Who is affected.** Installations whose `channels.proxyUrl` uses one of those
+spellings. Canonical decimals, other IPv6 literals, and a managed Service proxy URL
+still start.
 
-**Steps.** Set the peer's real Namespace name (`kubectl get namespaces`), then
-upgrade.
+**How to tell.** Startup fails with
+`Channel proxy URL IPv4 host must be four decimal octets from 0 to 255 with no leading zeros; other spellings parse as a different address.`
+or `Channel proxy URL host must not be an unspecified or IPv4-mapped IPv6 address; write the proxy's own IPv4 or IPv6 address.`
 
-## 2026-10-09: sandbox domains longer than 214 characters are refused
+**Steps.** Write the proxy's own address, an IPv4 host as four decimal octets
+(`127.0.0.1` for `0177.0.0.1`, `10.42.0.15` for `[::ffff:10.42.0.15]`), and
+restart.
 
-**What breaks.** Since #1823, Helm refuses a `gatewayRouting.sandbox.domain`
-over 214 characters (`must not exceed 214 characters, leaving room for the
-agent-<32 hex>. prefix`), and the controller refuses to start with
-`Sandbox domain must not exceed 214 characters`. Each dedicated Agent hostname,
-`agent-<32 hex>.<domain>`, must fit the 253-character Gateway API limit.
+## 2026-10-13: shorthand observability IPv4 hosts are refused
 
-**Who is affected.** Installations with sandbox routing and a 215-253 character
-domain. Their dedicated Agent preview routes were already refused at deploy.
+**What breaks.** An observability URL whose IPv4 host is not four decimal
+octets from 0 to 255, with no leading zeros, is refused. Shorthand, hex, a
+single integer, and leading zeros used to be stored as a different address
+(`192.168.1` became `192.168.0.1`; `2130706433` became `127.0.0.1`).
 
-**How to tell.**
-`helm get values <release> -o json | jq '.gatewayRouting.sandbox.domain // "" | length'`
-prints more than 214.
+**Who is affected.** Profiles with `controlPlane.observabilityUrl`, and
+Installations whose startup `observability.url` uses one of those spellings.
+A canonical host such as `192.168.1.1`, and any DNS name, still loads.
 
-**Steps.** Pick a shorter preview domain, issue its wildcard certificate and
-DNS, set the new domain, then upgrade.
+**How to tell.** The profile reports `controlPlane.observabilityUrl IPv4 host
+must be four decimal octets from 0 to 255 with no leading zeros; other
+spellings parse as a different address.` API and worker startup log
+`OBSERVABILITY_URL_INVALID`.
 
-## 2026-10-07: migration 0049 refuses managed ChatGPT service-account Agents
+**Steps.** Write the four decimal octets you mean, then render or restart.
 
-**What breaks.** Since #1648 (`94957cedc`), migration
-`0049_codex_pat_sources` stops the upgrade with SQLSTATE `23514`
-(`Unsupported legacy managed PAT authentication`) when any Agent, Agent
-revision or queued provisioning request still uses the retired
-`chatgpt_service_account` Harness auth. The method is now `codex_pat` with a
-service-account source. The old release keeps running; nothing is changed.
+## 2026-10-13: IP database hosts are verified against the certificate
 
-**Who is affected.** Installations that ever deployed an Agent with
-`harnessAuth.method` `chatgpt_service_account`, including Agents since changed
-to another method, because their old revisions keep it.
+**What breaks.** A PostgreSQL URL whose host is an IP literal and whose TLS
+mode verifies the server (`sslmode=verify-full`; without `uselibpqcompat=true`
+also `prefer`, `require` and `verify-ca`; or `PGSSLMODE` set to one of those)
+now requires the server certificate to list that IP as an IP subjectAltName, as
+libpq does. Before, the check ran against the name `localhost`, so any
+certificate for `localhost` signed by the database CA was accepted.
 
-**How to tell.** Before upgrading, on the old release:
+**Who is affected.** Installations that reach PostgreSQL by IP with a
+certificate issued only for DNS names. DNS hosts, Unix sockets,
+`sslmode=disable`, `no-verify`, and libpq-compatible `prefer`, `require` and
+`verify-ca` are unchanged.
 
-```bash
-occ agent list -o json | jq -r '.[] | select(.harnessAuth.method == "chatgpt_service_account") | .id'
-```
+**How to tell.** The API logs `startup-error` and the worker logs
+`worker.startup-error`, both with code `DATABASE_TLS_CERTIFICATE_INVALID` and
+reason `ERR_TLS_CERT_ALTNAME_INVALID`. Bootstrap logs `PERSISTENCE_UNAVAILABLE`
+and the migrator `MIGRATION_FAILED`.
 
-Run it in every Namespace (`--namespace`). An Agent changed away from the method
-still has old revisions; check them with
-`GET /namespaces/<id>/agents/<agent>/revisions`.
+**Steps.** Reissue the server certificate with `IP:<address>` in its
+subjectAltName, or connect by a DNS name the certificate carries, then restart
+the API and worker.
 
-**Steps.** Deleting an Agent removes its revisions and provisioning requests,
-which clears the refusal.
+## 2026-10-13: more model credential header names and provider models lists
 
-1. Record each affected Agent's settings (`occ agent get <id> -o json`) and
-   workspace files.
-2. Delete it on the old release (`occ agent delete <id>`) and wait until
-   `occ agent list` no longer shows it.
-3. Upgrade.
-4. Re-create the Agent with
-   `"harnessAuth": {"method": "codex_pat", "source": {"kind": "service_account", "namespaceId": "<ns>", "id": "<sa>"}}`,
-   then deploy it.
+**What breaks.** The 2026-10-12 model credential rules (below)
+match more header names: every name ending in `key` or `keys` except an
+idempotency or cache key, a last word of `bearer`, `credential`, `passcode`,
+`passphrase` or `signature`, and plurals, such as `X-Auth-Key`,
+`DD-APPLICATION-KEY` or `X-Hub-Signature-256`. Configuration create and update
+and provisioning, and on Kubernetes Compute also Preset saves, Agent saves and
+deployment, answer `400` for a `models.providers.<provider>.models` that is
+not a list, which OpenClaw refused only when the Gateway started.
+A later change also matches the words `authentication`, `assertion`, `hmac`,
+`jwt`, `license`, `otp`, `pass`, `pin` and `pwd`, suffixes such as `-v2` and
+`.` separators, but saves partition, shard, sort and dedup keys; on every
+Compute, Configuration and Preset saves refuse a header name that is not a
+valid HTTP field name, and Preset saves check `models`, `baseUrl` and `api`
+(a variable without a default is checked once filled). A later change skips
+a trailing algorithm word such as `-sha256` or `-ed25519` and a digit glued
+to `key`, and matches `protection-bypass`. A later change quotes the header in
+the Kubernetes message instead of a word list: `must not set the credential
+header "X-Upstream-Pwd" (its name marks a credential)`; on Kubernetes a Preset
+header name that waits on a variable saves, checked once filled. A later change
+checks an escaped token (`\{{ vars.name }}`), or a default that reads like a
+token, as written: it stays literal once filled, so such a header name,
+`baseUrl` or `api` is refused at save instead of failing every launch. The
+invalid header name refusal now quotes the header up to its first invalid
+character: `must use valid HTTP header names, not "Bad…"`. A later change
+refuses, on every Compute, a provider or model `baseUrl` with a user name or
+password, like `request.proxy.url`, and checks a `baseUrl` or `api` that holds
+only a `$${VAR}` escape as written: it is no reference. Preset saves match a
+header name as the text around its variables (`Authorization{{ vars.suffix }}`)
+and refuse a literal `baseUrl` scheme other than `http` or `https` however many
+variables follow. A later change finds a user name or password in a `baseUrl`
+or `request.proxy.url` whose host or port is a variable or `${VAR}` (or in its
+`:-` fallback), refuses a variable as the whole user name, and names an invalid
+first header character by code point: `not one that starts with U+007B`. A
+Preset saved with one still reads but cannot launch: edit it. A later change
+refuses one in `proxy.proxyUrl`, a channel or channel account `proxy`, an MCP
+server `url` and any URL in an `env` map (skill, hook, sandbox, ...),
+whatever the name (`HTTPS_PROXY`, `GOPROXY`); a `baseUrl` with an empty host
+(`https:///v1`, as an empty variable leaves it);
+and a number or boolean variable as the whole `baseUrl` or `api`. A later
+change refuses a `baseUrl` without exactly `//` after `http:` or `https:`
+(`https:/v1`, `https:${HOST}`, `https:{{ vars.host }}`), and a user name or
+password in Codex's network proxy URLs and speech and Talk provider `proxy`
+settings. A later change applies the header rule to MCP server `headers`
+(also under `nodeHost`), and reads `GIT_CONFIG_VALUE_<n>` and
+`GIT_CONFIG_PARAMETERS` values as proxies when their key names one, such as
+`http.proxy`.
 
-_Untested_ on a real Installation. The split-layout script below does steps 1, 2
-and 4 for every Agent it moves.
+**Who is affected.** Configurations with such a header, such a URL with a
+user name or password, or a `models` record, `null` or string on any provider.
+A stored Configuration with such a user name or password does not deploy until
+it is edited.
 
-## 2026-10-05: split-layout tenants block the controller upgrade
+**How to tell.** The 2026-10-12 messages,
+`Configuration setting models.providers.<provider>.models must be an array of model entries.`,
+`Configuration field <field> carries a user name or password in the URL.`,
+`... must be an absolute http or https URL.`
+or `... must start with https:// or http:// (the // after the scheme is missing).`
 
-**What breaks.** Since #925 (`dd344a97c`), a single-cluster Installation keeps
-each Namespace's Gateways and Harnesses in one tenant namespace. Releases before
-it kept Gateways, their state and the canonical Secrets in a separate
-`oce-gateways-<hash>` namespace. The current API and worker refuse to start
-while such a namespace lacks the tenant label, and the
-[image upgrade helper](production-upgrade.md) stops at its startup preflight
-(`Existing split-layout Gateway storage prevents this single-cluster upgrade`)
-before it changes anything. See
-[split-layout installations](../../reference/drivers/kubernetes-compute.md#existing-split-layout-installations).
+**Steps.** Follow the 2026-10-12 steps for the header. Write `models` as a
+list of model objects, or remove it. Remove the user name and password from
+the URL, or make the whole URL a `${NAME}` reference. Give a `baseUrl` its host
+and write `//` after its scheme, and use a string variable for a whole `baseUrl`
+or `api`.
 
-**Who is affected.** Single-cluster Installations created by the 2026-09-28
-release, or by any main before `dd344a97c`, with at least one Namespace.
-Bootstrap creates `default`, so that is nearly all of them. The experimental
-two-cluster profile is not affected.
+## 2026-10-13: sign-in and repository CIDRs must be canonical decimals
 
-**How to tell.**
+**What breaks.** `helm upgrade` fails when a saved `auth.github.egressCidrs`,
+`auth.google.egressCidrs`, `auth.oidc.egressCidrs`, or
+`repositoryCredentials.upstreamCidrs` entry has a leading-zero octet, such as
+`140.82.112.08/20`. That value used to render, and the apiserver accepted it
+with a warning. The upgrade now stops before it writes that policy.
 
-```bash
-kubectl get namespaces -l openclaw.dev/gateway-namespace -L openclaw.dev/namespace
-```
+**Who is affected.** Saved releases that use a leading-zero octet in one of
+those lists. A canonical decimal such as `140.82.112.0/20` or `140.82.112.8/20`
+still upgrades.
 
-A row with an empty `NAMESPACE` column is a split-layout tenant.
+**How to tell.** Helm stops with
+`auth.github.egressCidrs requires explicit IPv4 CIDRs with prefixes 1 through 32`,
+or the same sentence for `auth.google.egressCidrs`, `auth.oidc.egressCidrs`, and
+`repositoryCredentials.upstreamCidrs`.
 
-**Steps.** Adopt each tenant in place with the
-[split-layout upgrade](split-layout-upgrade.md): each `oce-gateways-<hash>`
-namespace becomes its tenant's namespace, and IDs, Namespace names, revisions,
-Secrets, service-account credentials, chat history and Harness workspaces all
-stay. Tenants that can't be adopted use the export fallback on the same page,
-which re-creates them under new IDs.
+**Steps.** Write the canonical decimal (`140.82.112.8/20` for
+`140.82.112.08/20`) and upgrade again.
 
-## 2026-10-01: released dedicated Agents fail to redeploy
+## 2026-10-13: remote node CIDRs must be canonical
 
-**What breaks.** Since `7e831ba37`, the dedicated Harness init container makes
-its `workspace` and `generated-images` directories private (`0700`). Agents
-deployed by the 2026-09-28 release have those directories owned by root, so on
-the first redeploy the init container fails with `EPERM` and the Harness stays
-in `Init:Error`. The upgrade helper's runtime step redeploys every running Agent.
+**What breaks.** `helm upgrade` fails when a saved
+`gatewayRouting.remoteNodeCidrs` entry uses a leading zero, such as
+`010.0.0.1/32` or `::ffff:010.0.0.1/128`. Those values used to render, and the
+apiserver accepted them with a warning. The upgrade now stops before it writes
+that policy.
 
-**Who is affected.** Installations whose dedicated Agents were deployed by the
-2026-09-28 release and are redeployed by a controller from `7e831ba37` up to,
-but not including, #1652 (`42c43fcd0`, 2026-10-09).
+**Who is affected.** Saved releases that use a leading-zero spelling. Canonical
+values still upgrade, including `10.0.0.1/32`, `0.0.0.0/0`, `::/64`, and
+`::ffff:10.0.0.0/120`. An empty list and `null` still omit the ingress block.
 
-**How to tell.** The Harness Pod's `prepare-private-state` container exits with
-`EPERM: operation not permitted, chmod '/harness-workspace-state/workspace'`.
+**How to tell.** Helm stops with
+`gatewayRouting.remoteNodeCidrs requires an IPv4 or IPv6 CIDR` for
+`010.0.0.1/32`, and with
+`gatewayRouting.remoteNodeCidrs contains an invalid IPv6 address` for
+`::ffff:010.0.0.1/128`.
 
-**Steps.** Upgrade the controller to `42c43fcd0` or later, then deploy the
-Agent again (`occ agent deploy <id>`). The init container moves each old
-directory aside, recreates it as uid 1000 with mode `0700` and moves the files
-back. Entries it cannot move back are left in `.workspace.kubelet-created` or
-`.generated-images.kubelet-created` beside it and named in the init log.
+**Steps.** Write the canonical value (`10.0.0.1/32` for `010.0.0.1/32`, and
+`::ffff:10.0.0.1/128` for `::ffff:010.0.0.1/128`) and upgrade again.
+
+## 2026-10-13: execution API CIDRs must be explicit and nonzero
+
+**What breaks.** `helm upgrade` fails when a saved `executionCluster.apiCidrs`
+entry is `0.0.0.0/0`, `::/0`, or a leading-zero address such as `010.44.0.2/32`.
+Those values used to render. A `/0` became egress to any address on the
+execution API port, and the apiserver accepted the leading-zero form with a
+warning. The upgrade now stops before it writes that policy.
+
+**Who is affected.** Saved releases that use one of those spellings. A canonical
+IPv4 CIDR with prefix 1 through 32, such as `192.0.2.0/28`, and a canonical
+IPv6 CIDR with a nonzero prefix, such as `2001:db8::/64`, still upgrade. A
+disabled execution cluster is not checked.
+
+**How to tell.** Helm stops with
+`executionCluster.apiCidrs requires an explicit IPv4 or IPv6 CIDR with a nonzero prefix`.
+
+**Steps.** Replace `0.0.0.0/0` or `::/0` with the execution API addresses you
+mean to allow. Rewrite `010.44.0.2/32` as `10.44.0.2/32`. Upgrade again.
+
+## 2026-10-13: OpenShell gateway readiness requires timeoutMs
+
+**What breaks.** Controller startup fails when `gateway.readiness` is set and
+`timeoutMs` is omitted. That configuration starts today. The field must be a
+positive safe integer. Omitted readiness is unchanged.
+
+**Who is affected.** Installations, and the real k3d helper, that set
+`gateway.readiness` with only `serviceName` and `podSelector`.
+
+**How to tell.** Startup logs `startup-error` with code `STARTUP_FAILED`. The
+Installation loader reports `OpenShell gateway readiness timeout must be a
+positive safe integer.` The message does not name `timeoutMs`.
+
+**Steps.** Set `gateway.readiness.timeoutMs` to a positive millisecond window.
+The real helper uses 120000. Then start again.

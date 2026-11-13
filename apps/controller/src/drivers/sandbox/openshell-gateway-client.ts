@@ -11,7 +11,7 @@ import {
   statusCode,
 } from "./openshell-gateway-errors.ts";
 import { asRecord, isNonEmptyString } from "@openclaw-enterprise/utils";
-import { DependencyUnavailableError } from "@openclaw-enterprise/occ";
+import { DependencyUnavailableError, gatewayEndpointRewritesIpv4 } from "@openclaw-enterprise/occ";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -90,6 +90,10 @@ export interface OpenShellSandboxResponse {
   readonly annotations: Readonly<Record<string, string>>;
   readonly spec?: Readonly<Record<string, unknown>>;
   readonly phase?: string | number;
+  /** The Harness main process's last exit code, kept while the gateway restarts it. */
+  readonly exitCode?: number;
+  /** The gateway's restart number in the current crash loop; absent before any restart. */
+  readonly restartCount?: number;
   readonly serviceUrls: Readonly<Record<string, string>>;
 }
 
@@ -261,7 +265,26 @@ export function openShellSandboxLogReader(
   });
 }
 
-export interface OpenShellGatewayClient extends OpenShellSandboxLogReader {
+export interface OpenShellSandboxObserver {
+  getSandbox(
+    request: OpenShellSandboxDeleteRequest,
+    signal: AbortSignal,
+  ): Promise<OpenShellSandboxResponse | undefined>;
+}
+
+/** Narrows a gateway client to its Sandbox record read; the result exposes nothing else. */
+export function openShellSandboxObserver(
+  client: OpenShellSandboxObserver,
+): OpenShellSandboxObserver {
+  const read = client.getSandbox.bind(client);
+  return Object.freeze({
+    getSandbox: (request: OpenShellSandboxDeleteRequest, signal: AbortSignal) =>
+      read(request, signal),
+  });
+}
+
+export interface OpenShellGatewayClient
+  extends OpenShellSandboxLogReader, OpenShellSandboxObserver {
   health(signal: AbortSignal): Promise<void>;
   getWorkspace(name: string, signal: AbortSignal): Promise<OpenShellWorkspaceResponse | undefined>;
   createWorkspace(
@@ -607,13 +630,26 @@ function profileDiagnosticsFailure(response: RecordValue, operation: string): vo
 }
 
 const MAX_SANDBOX_LOG_LINES = 2000;
+/**
+ * The largest response message the client accepts, after decompression: the grpc-js
+ * default, pinned because it is what bounds `GetSandboxLogs`. OpenShell does not limit
+ * a log line's length, so a read (up to 2000 lines; OCC asks for at most 1000) is
+ * buffered whole before OCC withholds oversized lines. A larger response fails the
+ * read with `RESOURCE_EXHAUSTED` instead of being cut.
+ * grpc-js has no per-call limit, and every other RPC already had this one.
+ */
+const MAX_RECEIVE_MESSAGE_BYTES = 4 * 1024 * 1024;
 
 /** RFC 3339 with up to nanosecond precision to a protobuf Timestamp. */
 function timestampMessage(value: string): { seconds: string; nanos: number } {
   const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/.exec(value);
   const seconds = match === null ? Number.NaN : Date.parse(`${match[1]}Z`);
-  if (match === null || Number.isNaN(seconds)) {
-    throw new OpenShellGatewayFailure("OpenShell log since time must be an RFC 3339 UTC time.");
+  if (
+    match === null ||
+    Number.isNaN(seconds) ||
+    new Date(seconds).toISOString().slice(0, 19) !== match[1]
+  ) {
+    throw new OpenShellGatewayFailure("OpenShell timestamp must be an RFC 3339 UTC time.");
   }
   return {
     seconds: String(Math.floor(seconds / 1000)),
@@ -690,6 +726,11 @@ function normalizeEndpoint(endpoint: string): {
   readonly secure: boolean;
 } {
   const value = nonempty(endpoint, "OpenShell gateway endpoint");
+  if (gatewayEndpointRewritesIpv4(value)) {
+    throw new OpenShellGatewayFailure(
+      "OpenShell gateway endpoint IPv4 host must be four decimal octets from 0 to 255 with no leading zeros; other spellings parse as a different address.",
+    );
+  }
   if (!value.includes("://")) {
     return { target: value, secure: false };
   }
@@ -766,6 +807,10 @@ function sandboxResponse(
     throw new OpenShellGatewayFailure(`OpenShell ${operation} returned no service URL map.`);
   }
   const spec = asRecord(sandbox?.spec);
+  const status = asRecord(sandbox?.status);
+  // Gateway-owned restart state (pinned gateway SandboxStatus fields 9 and 14).
+  const exitCode = status?.exit_code;
+  const restartCount = status?.restart_count;
   return Object.freeze({
     name,
     ...(typeof metadata?.id === "string" && metadata.id.length > 0 ? { id: metadata.id } : {}),
@@ -783,9 +828,11 @@ function sandboxResponse(
         ]),
       ),
     ),
-    ...(asRecord(sandbox?.status)?.phase === undefined
-      ? {}
-      : { phase: asRecord(sandbox?.status)?.phase as string | number }),
+    ...(status?.phase === undefined ? {} : { phase: status.phase as string | number }),
+    ...(typeof exitCode === "number" && Number.isSafeInteger(exitCode) ? { exitCode } : {}),
+    ...(typeof restartCount === "number" && Number.isSafeInteger(restartCount) && restartCount > 0
+      ? { restartCount }
+      : {}),
   });
 }
 
@@ -1868,7 +1915,9 @@ export class GrpcOpenShellGatewayClient implements OpenShellGatewayClient {
     }
     return {
       grpc,
-      client: new OpenShell(endpoint.target, credentials) as unknown as OpenShellGrpcClient,
+      client: new OpenShell(endpoint.target, credentials, {
+        "grpc.max_receive_message_length": MAX_RECEIVE_MESSAGE_BYTES,
+      }) as unknown as OpenShellGrpcClient,
     };
   }
 }

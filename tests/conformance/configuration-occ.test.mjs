@@ -1077,6 +1077,8 @@ for (const scope of ["primary", "default-fallback", "entry-fallback", "provider-
 }
 
 test("OCC rejects alternate selectable runtimes and unsupported Codex providers before admitting work", async () => {
+  const defaultFallbackRefusal =
+    "Configuration setting agents.defaults.model.fallbacks must use the primary model's provider.";
   const scenarios = [
     ...[null, "openai/gpt-4.1-mini", [42], ["/missing-provider"]].map((fallbacks) => ({
       name: `malformed fallback selection ${JSON.stringify(fallbacks)} cannot be admitted`,
@@ -1093,6 +1095,7 @@ test("OCC rejects alternate selectable runtimes and unsupported Codex providers 
     {
       name: "fallback cannot change provider even when both models select the same Harness",
       executionMode: "dedicated",
+      saveRefusal: defaultFallbackRefusal,
       values: {
         agents: {
           defaults: {
@@ -1134,6 +1137,7 @@ test("OCC rejects alternate selectable runtimes and unsupported Codex providers 
     {
       name: "embedded OpenClaw cannot fall back to dedicated Codex",
       executionMode: "embedded",
+      saveRefusal: defaultFallbackRefusal,
       values: {
         agents: {
           defaults: {
@@ -1146,6 +1150,7 @@ test("OCC rejects alternate selectable runtimes and unsupported Codex providers 
     {
       name: "dedicated Codex cannot fall back to embedded OpenClaw",
       executionMode: "dedicated",
+      saveRefusal: defaultFallbackRefusal,
       values: {
         agents: {
           defaults: {
@@ -1173,6 +1178,8 @@ test("OCC rejects alternate selectable runtimes and unsupported Codex providers 
     {
       name: "per-agent primary model fallbacks cannot select dedicated Codex",
       executionMode: "embedded",
+      saveRefusal:
+        "Configuration setting agents.entries.primary.model.fallbacks must use the primary model's provider.",
       values: {
         agents: {
           defaults: {
@@ -1308,8 +1315,22 @@ test("OCC rejects alternate selectable runtimes and unsupported Codex providers 
     },
   ];
 
-  for (const { name, executionMode, values } of scenarios) {
+  for (const { name, executionMode, values, saveRefusal } of scenarios) {
     const { agent, controller, namespace } = await fixture();
+    if (saveRefusal !== undefined) {
+      // Every deployment refuses a fallback on another provider, so Configuration save refuses
+      // it first, naming the setting (finding 1298).
+      await assert.rejects(
+        controller.createConfiguration(administrator, {
+          namespaceId: namespace.id,
+          kind: "agent",
+          values,
+        }),
+        { name: "ConfigurationHarnessError", message: saveRefusal },
+        name,
+      );
+      continue;
+    }
     const configuration = await controller.createConfiguration(administrator, {
       namespaceId: namespace.id,
       kind: "agent",
@@ -1361,6 +1382,28 @@ test("Harness admission rejects conflicting selections, mode mismatches, and una
     agentId: agent.id,
     configurationId: codexConfiguration.id,
   });
+  const mismatch = (error) =>
+    error instanceof ConfigurationHarnessError &&
+    error.message ===
+      "The Configuration selects the Codex Harness, which needs dedicated execution; this Agent uses embedded execution. Change the Agent's execution mode or its Configuration.";
+  // Agent save given the deploy route's Harness resolver refuses the same pair with the same
+  // message (finding 1117). The update above, without it, stands in for an Agent stored earlier.
+  await assert.rejects(
+    controller.updateAgent(
+      administrator,
+      { namespaceId: namespace.id, agentId: agent.id, configurationId: codexConfiguration.id },
+      resolveApprovedDevelopmentHarness,
+    ),
+    mismatch,
+  );
+  await assert.rejects(
+    controller.createAgent(
+      administrator,
+      { namespaceId: namespace.id, name: "Mismatched", configurationId: codexConfiguration.id },
+      resolveApprovedDevelopmentHarness,
+    ),
+    mismatch,
+  );
 
   // An explicit Codex selection cannot run in an embedded Agent or use OpenClaw's approval.
   // The mismatch is the caller's to fix, so it is named rather than reported as a missing dependency.

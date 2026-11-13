@@ -19,7 +19,13 @@ drivers:
 ```
 
 Dedicated Codex defaults to `catalogSource: hosted`, which discovers plugins
-using a PAT or a Secret containing one. Select the hardcoded OpenAI catalog to
+using a PAT or a Secret containing one. Hosted discovery needs API HTTPS to
+`auth.openai.com` and `chatgpt.com`. The
+[Codex profile](../../guides/deploy/installation-profiles.md#hosted-discovery-egress)
+renders matching Helm egress; manual YAML needs equivalent policy. The driver
+does not configure Kubernetes networking.
+
+Select the hardcoded OpenAI catalog to
 browse without a discovery credential or provider catalog requests:
 
 ```yaml
@@ -186,7 +192,12 @@ a permissive profile unless strict review applies; writing an app-level
 
 For an explicit app reviewer, startup reads `configRequirements/read`, compares
 app/link reviewer values, and checks `allowedApprovalsReviewers`. Automatic review
-requires current approval policy `on-request` or `granular`. Human review fails
+requires current approval policy `on-request` or `granular`. Compute writes the
+policy the Gateway runs into native startup configuration: the configured
+`appServer.approvalPolicy`, with `on-failure` as `on-request`. Omission keeps
+native defaults, so the Codex Driver's `validateAgentConfiguration` refuses
+automatic review at Agent save, provisioning and deployment unless the policy is
+`on-request` or `on-failure`. Human review fails
 if managed `requiredOnModels` includes the current model, or model selection
 cannot be verified against a nonempty requirement. Omitted reviewers do not
 trigger these explicit-choice checks.

@@ -74,6 +74,11 @@ required member Drivers. A ChatGPT workspace UUID identifies the upstream worksp
 Inline keys and configurable upstream URLs are unsupported. Credential TTL
 accepts 1–2,592,000 seconds and defaults to 2,592,000 (30 days); changing it does
 not renew issued credentials. Retired `integrations` and `adminKeyPath` keys fail.
+The production chart's `backend.chatgpt.secretName` must be a lowercase
+DNS-subdomain Kubernetes resource name of at most 253 characters. Its
+`backend.chatgpt.key` accepts letters, digits, `-`, `_` and `.`, up to 253
+characters, but cannot be `.` or start with `..`; the unchanged default is
+`admin-key`.
 
 `backend[].drivers` declares required membership. The ChatGPT Backend and its
 selected `service_account` Driver must be configured together with matching IDs.
@@ -142,7 +147,9 @@ Its closed `configuration` accepts:
   path, query, or fragment. HTTP origins use port 80 when omitted; an explicit
   `:80` also remains 80 in the gRPC target. HTTPS retains its default 443.
   Either form refuses an IPv6 zone ID (`[fe80::1%eth0]`), which URL parsing
-  cannot carry. The port, explicit or the scheme default, must be 1 to 65535,
+  cannot carry. An IPv4 host must be four decimal octets from 0 to 255 with no
+  leading zeros; shorthand, a single integer, hex, and leading zeros dial a
+  different address and are refused. The port, explicit or the scheme default, must be 1 to 65535,
   and a bare value must also parse as `http://<value>`, as both gateway clients
   read it.
 - `serviceName`, `scheme`, and `port`: used when `endpoint` is omitted. A dotted

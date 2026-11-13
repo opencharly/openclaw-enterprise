@@ -108,9 +108,9 @@ COPY deploy/runtime/openclaw-connect-ephemeral-expired-setup.patch /tmp/openclaw
 RUN echo 'c57722da9a88ec4295577ab9a9ba6e2ca37fceda11ce8b51b08ee1425e00851f  /tmp/openclaw-connect-ephemeral-expired-setup.patch' | sha256sum --check --strict \
     && git apply /tmp/openclaw-connect-ephemeral-expired-setup.patch
 # TODO: Remove this dependency pin when the selected OpenClaw source supports plugin defaults.
-COPY deploy/runtime/stock-codex-0.163.0-alpha.1-dependency-pin.patch /tmp/stock-codex-0.163.0-alpha.1-dependency-pin.patch
-RUN echo '00d44f40352fa9c5a7ae80b986eb25baf014d26f892b8849646c1922ef8c7a9c  /tmp/stock-codex-0.163.0-alpha.1-dependency-pin.patch' | sha256sum --check --strict \
-    && git apply --unidiff-zero /tmp/stock-codex-0.163.0-alpha.1-dependency-pin.patch
+COPY deploy/runtime/stock-codex-0.163.0-alpha.2-dependency-pin.patch /tmp/stock-codex-0.163.0-alpha.2-dependency-pin.patch
+RUN echo '7bb0ae29bf3259b245d7675b2c6a3abe521c8139095f75ce0c532188162de5e9  /tmp/stock-codex-0.163.0-alpha.2-dependency-pin.patch' | sha256sum --check --strict \
+    && git apply --unidiff-zero /tmp/stock-codex-0.163.0-alpha.2-dependency-pin.patch
 COPY scripts/build-runtime-assets.mjs /tmp/build-runtime-assets.mjs
 RUN node /tmp/build-runtime-assets.mjs inputs /source /inputs
 
@@ -142,14 +142,17 @@ COPY --from=openclaw-source /inputs/ ./
 
 FROM openclaw-dependency-inputs AS openclaw-build
 # Keep package-store downloads out of retained layers; installed files remain.
+# install-attempts.sh bounds each attempt, so one slow download cannot hold the
+# build (pnpm's own timeout ignores a download that still trickles).
 RUN --mount=type=secret,id=build-ca,required=false \
     --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     --mount=type=bind,from=matrix-sdk-crypto,source=/out,target=/tmp/matrix-sdk-crypto \
     --mount=type=bind,source=deploy/runtime/with-pinned-matrix-sdk-crypto.mjs,target=/tmp/with-pinned-matrix-sdk-crypto.mjs \
+    --mount=type=bind,source=deploy/runtime/install-attempts.sh,target=/tmp/install-attempts.sh \
     set -eu; \
     if [ -f /run/secrets/build-ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build-ca; fi; \
     corepack enable; \
-    node /tmp/with-pinned-matrix-sdk-crypto.mjs /tmp/matrix-sdk-crypto \
+    sh /tmp/install-attempts.sh node /tmp/with-pinned-matrix-sdk-crypto.mjs /tmp/matrix-sdk-crypto \
     pnpm install --frozen-lockfile --store-dir=/tmp/pnpm-store \
       --config.supportedArchitectures.os=linux \
       --config.supportedArchitectures.cpu="$(node -p 'process.arch')" \
@@ -168,10 +171,11 @@ RUN --mount=type=secret,id=build-ca,required=false \
     --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     --mount=type=bind,from=matrix-sdk-crypto,source=/out,target=/tmp/matrix-sdk-crypto \
     --mount=type=bind,source=deploy/runtime/with-pinned-matrix-sdk-crypto.mjs,target=/tmp/with-pinned-matrix-sdk-crypto.mjs \
+    --mount=type=bind,source=deploy/runtime/install-attempts.sh,target=/tmp/install-attempts.sh \
     set -eu; \
     if [ -f /run/secrets/build-ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build-ca; fi; \
     corepack enable; \
-    node /tmp/with-pinned-matrix-sdk-crypto.mjs /tmp/matrix-sdk-crypto \
+    sh /tmp/install-attempts.sh node /tmp/with-pinned-matrix-sdk-crypto.mjs /tmp/matrix-sdk-crypto \
     pnpm install --frozen-lockfile --prod --store-dir=/tmp/pnpm-store \
       --config.supportedArchitectures.os=linux \
       --config.supportedArchitectures.cpu="$(node -p 'process.arch')" \
@@ -225,7 +229,7 @@ RUN --mount=type=bind,from=openclaw-source,source=/source/scripts,target=/verifi
 FROM node-runtime-base AS runtime
 
 ARG TARGETARCH
-ENV OPENAI_CODEX_VERSION=0.163.0-alpha.1
+ENV OPENAI_CODEX_VERSION=0.163.0-alpha.2
 
 ENV NODE_ENV=production
 # Keep local npm commands from issuing unrelated background update requests.

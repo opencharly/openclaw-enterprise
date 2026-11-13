@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import type { AgentRevision, WorkspaceSetup } from "@openclaw-enterprise/contracts";
 
-import { WORKSPACE_SETUP_RUNTIME, workspaceSetupMainAgent } from "../workspace-setup-runtime.ts";
+import { WORKSPACE_SETUP_RUNTIME, workspaceSetupMainEntry } from "../workspace-setup-runtime.ts";
 import { ConfigurationFailure } from "./schema.ts";
 import { STATE_DIRECTORY, WORKSPACE_DIRECTORY } from "./spec.ts";
 
@@ -15,7 +15,8 @@ import { STATE_DIRECTORY, WORKSPACE_DIRECTORY } from "./spec.ts";
 export function workspaceDirectory(revision: Readonly<AgentRevision>): string {
   const agents = asRecord(revision.configuration.agents);
   const defaults = asRecord(agents?.defaults);
-  const main = workspaceSetupMainAgent(revision.configuration);
+  // The roster entry that consumes the setup documents; the Driver reads its Agent only.
+  const main = workspaceSetupMainEntry(revision.configuration)?.agent;
   if (main === undefined) {
     throw new ConfigurationFailure("Workspace setup requires only the native main Agent.");
   }
